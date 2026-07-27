@@ -9,6 +9,7 @@ import {
   normalizeSessionEvent,
   type WireSessionEvent,
 } from "@openma/common/session-events/managed";
+import { DEFAULT_BRIDGE_SERVER_URL } from "./bridge/lib/defaults.js";
 import { currentProfile } from "./bridge/lib/platform.js";
 
 // ─── Config ───
@@ -2285,7 +2286,7 @@ async function main() {
         // would fail at exchange ("invalid code"). Two separate flags are
         // still useful for split dev setups (web on one host, api on
         // another) — keep --browser-origin as an explicit override.
-        const serverUrl = flag(args, "--server-url") ?? "https://openma.dev";
+        const serverUrl = flag(args, "--server-url") ?? DEFAULT_BRIDGE_SERVER_URL;
         const { runSetup } = await import("./bridge/commands/setup.js");
         await runSetup({
           serverUrl,
