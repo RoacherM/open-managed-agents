@@ -40,6 +40,8 @@ async function startMainNode(opts: { dataDir: string }): Promise<ProcessHandle> 
       SESSION_OUTPUTS_DIR: join(opts.dataDir, "outputs"),
       AUTH_DISABLED: "1",
       BETTER_AUTH_SECRET: "test-secret-only-for-vitest",
+      PLATFORM_ROOT_SECRET: "",
+      PLATFORM_ROOT_SECRET_FILE: join(opts.dataDir, "platform-root-secret"),
       NODE_ENV: "test",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -111,7 +113,37 @@ describe("Node POST /v1/sessions/:id/files (promoteSandboxFile)", () => {
     h = await startMainNode({ dataDir });
     const base = `http://localhost:${h.port}/v1`;
 
-    // 1. Create an agent (so the session has something to bind to).
+    // The Console's provider form calls POST /models/list. It must reach the
+    // real route (400 for missing key), not the old Node 404 stub.
+    const modelsRes = await fetch(`${base}/models/list`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "ant" }),
+    });
+    expect(modelsRes.status).toBe(400);
+
+    // 1. Agent models must resolve through Model Cards; env vars / raw YAML
+    //    handles cannot bypass provider configuration.
+    const noCardRes = await fetch(`${base}/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "test-agent", model: "claude-haiku-4-5-20251001" }),
+    });
+    expect(noCardRes.status).toBe(400);
+    expect(await noCardRes.text()).toContain("Model Card");
+
+    const cardRes = await fetch(`${base}/model_cards`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "ant-compatible",
+        model_id: "claude-haiku-4-5-20251001",
+        api_key: "sk-test",
+        base_url: "http://127.0.0.1:1/v1",
+      }),
+    });
+    expect(cardRes.status).toBe(201);
+
     const aRes = await fetch(`${base}/agents`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -120,15 +152,19 @@ describe("Node POST /v1/sessions/:id/files (promoteSandboxFile)", () => {
     expect(aRes.status).toBe(201);
     const agent = (await aRes.json()) as { id: string };
 
-    // 2. Create a session. Body shape mirrors apps/main:
-    //    { agent: <id>, environment?: <id> } — environment defaults to
-    //    `env_local_runtime` when an agent has a runtime_binding (Node has
-    //    no cloud env_id concept yet, so loadEnvironment is unset and the
-    //    request falls through with environment=null).
+    // 2. Create an environment and bind the session to it.
+    const eRes = await fetch(`${base}/environments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "test-environment", config: { type: "cloud" } }),
+    });
+    expect(eRes.status).toBe(201);
+    const environment = (await eRes.json()) as { id: string };
+
     const sRes = await fetch(`${base}/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: agent.id, environment: "env_local_runtime" }),
+      body: JSON.stringify({ agent: agent.id, environment: environment.id }),
     });
     if (sRes.status !== 201) {
       const body = await sRes.text();

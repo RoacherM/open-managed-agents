@@ -51,21 +51,9 @@ crash-recovery semantics. Switch between them by changing env vars, not code.
 ```bash
 git clone https://github.com/openma-ai/open-managed-agents.git
 cd open-managed-agents
-cp .env.example .env
-
-# Two secrets are required before first boot — both generated locally:
-#   BETTER_AUTH_SECRET   — signs Console sessions
-#   PLATFORM_ROOT_SECRET — encrypts credentials, model-card API keys, integration tokens at rest
-#                          (lose it and every encrypted row is unreadable — back it up)
-$EDITOR .env
-# BETTER_AUTH_SECRET=$(openssl rand -hex 32)
-# PLATFORM_ROOT_SECRET=$(openssl rand -base64 32)
-#
-# Optional: ANTHROPIC_API_KEY lets the first agent run without a Model Card.
-# In production, add a Model Card per tenant from the Console instead.
 
 # SQLite + LocalSubprocess sandbox (default — fastest path)
-docker compose up -d
+docker compose up --build -d
 
 # Or Postgres backend
 # docker compose -f docker-compose.postgres.yml up -d
@@ -76,18 +64,9 @@ curl localhost:8787/health
 open http://localhost:8787   # Console UI on the same port
 ```
 
-Smoke test the harness end-to-end:
-
-```bash
-AID=$(curl -s -X POST localhost:8787/v1/agents -H 'content-type: application/json' \
-  -d '{"name":"hello","model":"claude-sonnet-4-6","tools":[{"type":"agent_toolset_20260401"}]}' | jq -r .id)
-
-SID=$(curl -s -X POST localhost:8787/v1/sessions -H 'content-type: application/json' \
-  -d "{\"agent\":\"$AID\"}" | jq -r .id)
-
-curl -s -X POST localhost:8787/v1/sessions/$SID/events -H 'content-type: application/json' \
-  -d '{"events":[{"type":"user.message","content":[{"type":"text","text":"Run: uname -a"}]}]}'
-```
+No `.env` is required for this local single-user path. In the Console, create
+a **Model Card**, then an **Environment**, **Agent**, and **Session**. SQLite
+deployments generate and persist their encryption key under `./data/`.
 
 Full self-host guide (sandbox modes, Postgres, BoxRun, vault sidecar,
 Console UI, operator gotchas): **[docs.openma.dev/self-host/overview](https://docs.openma.dev/self-host/overview/)**
@@ -669,12 +648,12 @@ The variables that gate boot and at-rest safety:
 
 | Variable | Required | Description |
 |---|---|---|
-| `PLATFORM_ROOT_SECRET` | **Yes** | AES-GCM key for `credentials.auth`, `model_cards.api_key_cipher`, and integration tokens. Workers refuse to start without it. **Back this up** — losing it makes every encrypted row unreadable. Generate with `openssl rand -base64 32`. |
+| `PLATFORM_ROOT_SECRET` | CF/Postgres: **Yes**; self-host SQLite: generated | AES-GCM key for credentials and model-card API keys. SQLite Compose persists an auto-generated key under `./data/`; shared deployments must provide one stable value. |
 | `BETTER_AUTH_SECRET` | **Yes** (prod) | better-auth session signing key. Sessions don't survive restart if missing. Generate with `openssl rand -hex 32`. |
 | `API_KEY` | Yes | Bootstrap key for the REST API in dev / first-run. Once the Console is up, prefer per-tenant API keys minted from there. |
 | `INTEGRATIONS_INTERNAL_SECRET` | Yes (if `apps/integrations` runs) | Shared secret between `apps/main` and `apps/integrations`. |
-| `ANTHROPIC_API_KEY` | No | Fallback LLM credential used when a tenant has not added a Model Card. **In production, add a Model Card per tenant from the Console** — the key is encrypted at rest under `PLATFORM_ROOT_SECRET`, scoped to the tenant, and rotatable without redeploy. |
-| `ANTHROPIC_BASE_URL` | No | Override for Anthropic-compatible proxies. |
+| `ANTHROPIC_API_KEY` | No | Legacy Cloudflare/Dreams configuration. Self-host agent turns require a Model Card and do not use this as a fallback. |
+| `ANTHROPIC_BASE_URL` | No | Legacy Cloudflare/Dreams override; configure agent provider URLs in Model Cards. |
 | `PUBLIC_BASE_URL` | No (dev) / Yes (prod) | Cookie domain + OAuth redirect base. Defaults to `*` trusted-origins — only safe for local dev. |
 | `SANDBOX_PROVIDER` | No | `subprocess` (default, no isolation), `litebox` (Firecracker), `daytona`, `e2b`, or `boxrun`. Use an isolated backend for untrusted agents. |
 | `TAVILY_API_KEY` | No | Backend for the `web_search` built-in tool. |

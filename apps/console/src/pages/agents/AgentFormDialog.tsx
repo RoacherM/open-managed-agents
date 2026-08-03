@@ -435,11 +435,7 @@ export function AgentFormDialog({
         setForm({
           ...INITIAL_FORM,
           name: String(parsed.name || ""),
-          // Paste-mode fallback: if the pasted config has no model field,
-          // claude-sonnet-4-6 is a real, current Anthropic model id (not
-          // a placeholder), so it's a reasonable default. The form
-          // dropdown does its own dynamic option set from modelCards.
-          model: String(parsed.model || "claude-sonnet-4-6"),
+          model: String(parsed.model || ""),
           system: String(parsed.system || ""),
           description: String(parsed.description || ""),
           mcpServers: Array.isArray(parsed.mcp_servers)
@@ -799,7 +795,13 @@ export function AgentFormDialog({
                     Cancel
                   </Button>
                   {createMode === "form" ? (
-                    <Button onClick={create} disabled={!form.name}>
+                    <Button
+                      onClick={create}
+                      disabled={
+                        !form.name ||
+                        (!(form.runtimeId && form.acpAgentId) && !selectedCardId)
+                      }
+                    >
                       Create Agent
                     </Button>
                   ) : (
@@ -870,8 +872,7 @@ function BasicTab({
       {!form.runtimeId &&
         (modelCards.length === 0 ? (
           <p className="text-xs text-fg-subtle bg-bg-surface px-3 py-2 rounded-lg">
-            No model cards configured. Cloud agents need at least one card to provide LLM
-            credentials.{" "}
+            No model cards configured. Agents need a card for their model and credentials.{" "}
             <a href="/model-cards" className="underline hover:text-fg-muted">
               Add one
             </a>
@@ -879,7 +880,12 @@ function BasicTab({
           </p>
         ) : (
           <div>
-            <label className="text-sm text-fg-muted block mb-1">Model</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-sm text-fg-muted">Model</label>
+              <a href="/model-cards" className="text-xs text-brand hover:underline">
+                Manage model cards →
+              </a>
+            </div>
             <Combobox<ModelCard>
               value={selectedCardId}
               onValueChange={(v, item) => {

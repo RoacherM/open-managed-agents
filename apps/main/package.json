@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "main": "src/index.ts",
+  "exports": {
+    "./routes/environments": "./src/routes/environments.ts",
+    "./routes/model-cards": "./src/routes/model-cards.ts",
+    "./routes/models": "./src/routes/models.ts",
+    "./routes/skills": "./src/routes/skills.ts"
+  },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
     "@cloudflare/sandbox": "^0.12.4",

@@ -66,11 +66,17 @@ export function EnvironmentsList() {
   } = useInfiniteApiQuery<Env>("/v1/environments", { limit: 20, params: envsParams });
 
   const create = async () => {
-    await api("/v1/environments", {
+    const created = await api<Env>("/v1/environments", {
       method: "POST",
-      body: JSON.stringify({ name: form.name, config: { type: "cloud" }, description: form.description || undefined }),
+      body: JSON.stringify({
+        name: form.name,
+        config: { type: "cloud", networking: { type: "unrestricted" } },
+        description: form.description || undefined,
+      }),
     });
-    setShowCreate(false); setForm({ name: "", description: "" }); load();
+    setShowCreate(false);
+    setForm({ name: "", description: "" });
+    nav(`/environments/${created.id}`);
   };
 
   // TanStack column defs. Order, filtering, and search all flow through
@@ -242,7 +248,7 @@ export function EnvironmentsList() {
         open={showCreate}
         onClose={() => setShowCreate(false)}
         title="Add Environment"
-        subtitle="Environments provide isolated sandboxes for code execution."
+        subtitle="Create the environment, then configure networking and packages."
         footer={
           <>
             <Button variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>

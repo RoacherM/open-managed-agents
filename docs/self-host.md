@@ -39,53 +39,42 @@ PG database (no separate `auth.db` file); in SQLite mode they live in
 ## Quick start (Docker, SQLite)
 
 ```bash
-# 1. Get an Anthropic API key. Any Anthropic-compatible endpoint works.
-cp .env.example .env
-$EDITOR .env  # set ANTHROPIC_API_KEY
-
-# 2. Start (first time builds the image; subsequent runs skip --build)
+# 1. Start (first time builds the image; subsequent runs skip --build)
 docker compose -f docker-compose.yml up -d --build
 
-# 3. Sanity check
+# 2. Sanity check
 curl localhost:8787/health
 # → {"status":"ok","runtime":"node","backends":{"db":"sqlite ..."},...}
 
-# 4. Create + drive an agent
-AID=$(curl -s -X POST localhost:8787/v1/agents \
-  -H 'content-type: application/json' \
-  -d '{"name":"shell","model":"claude-sonnet-4-6","system":"Use bash to answer.","tools":[{"type":"bash"}]}' \
-  | jq -r .id)
-
-SID=$(curl -s -X POST localhost:8787/v1/sessions \
-  -H 'content-type: application/json' \
-  -d "{\"agent_id\":\"$AID\"}" | jq -r .id)
-
-# Open a streaming SSE in one terminal:
-curl -N localhost:8787/v1/sessions/$SID/events/stream &
-
-# Send a message in another:
-curl -s -X POST localhost:8787/v1/sessions/$SID/events \
-  -H 'content-type: application/json' \
-  -d '{"events":[{"type":"user.message","content":[{"type":"text","text":"Run: ls -la / | head"}]}]}'
-
-# Watch the SSE — you should see agent.tool_use → agent.tool_result →
-# agent.message → session.status_idle
+# 3. Open the Console
+open http://localhost:8787
 ```
+
+If npmjs is slow from your network, keep the same one-line startup and override
+only the build registry:
+
+```bash
+NPM_CONFIG_REGISTRY=https://registry.npmmirror.com docker compose up -d --build
+```
+
+No `.env` is required for the default single-user SQLite deployment. In the
+Console, configure **Model Cards → Environments → Agents → Sessions**. Provider
+keys and base URLs belong to Model Cards; `ANTHROPIC_*` env vars are not an
+agent-model fallback on self-host.
 
 Subsequent commands:
 
 ```bash
 docker compose -f docker-compose.yml logs -f   # follow logs
-docker compose -f docker-compose.yml down       # stop, keep ./data
-docker compose -f docker-compose.yml down -v    # stop, wipe volumes
+docker compose -f docker-compose.yml down       # stop; ./data is retained
 ```
 
 ## Quick start (no Docker)
 
 ```bash
 pnpm install
-ANTHROPIC_API_KEY=sk-... pnpm --filter @open-managed-agents/main-node start
-# Same curl flow as above against localhost:8787.
+AUTH_DISABLED=1 pnpm --filter @open-managed-agents/main-node start
+# Configure the provider in Console → Model Cards.
 ```
 
 State lives at `./data/` (sqlite db + per-session sandbox workdirs).
@@ -98,9 +87,9 @@ sessions/events), or because you'd rather operate the PG cluster you
 already have than introduce a new SQLite footprint.
 
 ```bash
-# 1. Same .env (Postgres compose already sets DATABASE_URL internally)
+# 1. Postgres replicas need one stable encryption key.
 cp .env.example .env
-$EDITOR .env  # set ANTHROPIC_API_KEY
+$EDITOR .env  # set PLATFORM_ROOT_SECRET
 
 # 2. Start — brings up postgres:16-alpine + oma-server + oma-vault
 docker compose -f docker-compose.postgres.yml up -d --build
@@ -263,10 +252,9 @@ adapter / recovery-logic / SIGKILL bootstrap / CF DO eviction).
 
 Things I'd document if I were the on-call who got paged:
 
-- **`AUTH_DISABLED=1` must be in `.env`, not the shell.** `docker
-  compose` substitutes `${AUTH_DISABLED}` from the compose-time env
-  (your `.env` at the compose dir). Putting it in the shell only is
-  silently ignored.
+- **Compose defaults to `AUTH_DISABLED=1`.** To enable login, set
+  `AUTH_DISABLED=0` and a stable `BETTER_AUTH_SECRET` in `.env`, then recreate
+  the container.
 - **`docker compose restart` does NOT re-read env.** After editing
   `.env`, use `docker compose up -d --force-recreate oma-server` to
   pick up changes (or `down` then `up`).
@@ -516,8 +504,7 @@ on 8787; vite proxies `/v1` + `/auth` to it.
 
 ```bash
 # Terminal 1: main-node
-ANTHROPIC_API_KEY=sk-... BETTER_AUTH_SECRET=$(openssl rand -hex 32) \
-  PUBLIC_BASE_URL=http://localhost:5173 \
+AUTH_DISABLED=1 PUBLIC_BASE_URL=http://localhost:5173 \
   pnpm --filter @open-managed-agents/main-node start
 
 # Terminal 2: console (Vite dev server, proxies /v1 + /auth → :8787)
@@ -529,8 +516,8 @@ DATABASE_PATH=$(pwd)/data/oma.db OMA_VAULT_CA_DIR=$(pwd)/data/oma-vault-ca \
   pnpm --filter @open-managed-agents/oma-vault start
 ```
 
-Open `http://localhost:5173` (dev) or `http://localhost:8787` (docker),
-sign up via email + password. The verification OTP is printed to
+Open `http://localhost:5173` (dev) or `http://localhost:8787` (docker).
+If you enable authentication, sign up via email + password; the verification OTP is printed to
 main-node's stdout — paste into the console verify-signup screen.
 Operators wiring real email replace the `sendVerificationOTP` callback
 in `apps/main-node/src/auth/config.ts` with a Resend / SES / SMTP call.

@@ -74,42 +74,23 @@ optional sidecar (`oma-vault`) for outbound credential injection.
 ### Start
 
 ```bash
-# 1. Configure
-cp .env.example .env
-$EDITOR .env  # ANTHROPIC_API_KEY + BETTER_AUTH_SECRET
-
-# 2. Run (Docker compose: oma-server + oma-vault)
+# 1. Run (Docker compose: oma-server + oma-vault)
 docker compose -f docker-compose.yml up --build
 
-# 3. Sanity
+# 2. Sanity
 curl localhost:8787/health
-# → {"status":"ok","runtime":"node","auth":"better-auth",...}
+# → {"status":"ok","runtime":"node","auth":"disabled",...}
 
-# 4. Sign up
-curl -c cookies.txt -X POST localhost:8787/api/auth/sign-up/email \
-  -H 'content-type: application/json' \
-  -d '{"email":"you@example.com","password":"hunter2-test1234","name":"You"}'
-
-# 5. Drive an agent
-AID=$(curl -b cookies.txt -X POST localhost:8787/v1/agents \
-  -H 'content-type: application/json' \
-  -d '{"name":"shell","model":"claude-haiku-4-5-20251001","tools":[{"type":"agent_toolset_20260401"}]}' \
-  | jq -r .id)
-SID=$(curl -b cookies.txt -X POST localhost:8787/v1/sessions \
-  -H 'content-type: application/json' -d "{\"agent_id\":\"$AID\"}" | jq -r .id)
-curl -b cookies.txt -X POST localhost:8787/v1/sessions/$SID/events \
-  -H 'content-type: application/json' \
-  -d '{"events":[{"type":"user.message","content":[{"type":"text","text":"echo hi"}]}]}'
-curl -N -b cookies.txt localhost:8787/v1/sessions/$SID/events/stream
+# 3. Open Console and configure Model Cards → Environments → Agents → Sessions
+open http://localhost:8787
 ```
 
 ### Without Docker
 
 ```bash
 pnpm install
-ANTHROPIC_API_KEY=sk-... BETTER_AUTH_SECRET=$(openssl rand -hex 32) \
-  pnpm --filter @open-managed-agents/main-node start
-# Same curl flow as above against localhost:8787.
+AUTH_DISABLED=1 pnpm --filter @open-managed-agents/main-node start
+# Configure provider credentials in Console → Model Cards.
 ```
 
 ### Hard limits

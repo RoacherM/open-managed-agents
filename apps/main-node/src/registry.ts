@@ -35,8 +35,10 @@ import type {
 } from "@open-managed-agents/sandbox/orchestrator";
 import type { AgentService } from "@open-managed-agents/agents-store";
 import type { MemoryStoreService } from "@open-managed-agents/memory-store";
+import type { SessionService } from "@open-managed-agents/sessions-store";
 import type {
   AgentConfig,
+  EnvironmentConfig,
   SessionEvent,
   UserMessageEvent,
 } from "@open-managed-agents/shared";
@@ -50,6 +52,7 @@ export interface SessionRegistryDeps {
   sql: SqlClient;
   hub: EventStreamHub;
   agentsService: AgentService;
+  sessionsService: SessionService;
   memoryService: MemoryStoreService;
   /** Sandbox provisioning — vault outbound, mounts, backup-restore.
    *  Replaces the per-runtime buildMemoryMounter / buildSessionOutputsMounter
@@ -66,12 +69,13 @@ export interface SessionRegistryDeps {
 
   /** Build the LanguageModel for the agent. Reads env, applies custom
    *  headers, picks the right provider. */
-  buildModel(agent: AgentConfig): LanguageModel;
+  buildModel(agent: AgentConfig, tenantId: string): Promise<LanguageModel>;
 
   /** Build harness tools. Returns the tools dict the harness expects. */
   buildTools(
     agent: AgentConfig,
     sandbox: SandboxExecutor,
+    environmentConfig?: EnvironmentConfig["config"],
   ): Promise<unknown>;
 
   /** Build harness instance + context. Each is platform-neutral so the
@@ -83,6 +87,8 @@ export interface SessionRegistryDeps {
     sandbox: SandboxExecutor;
     tools: unknown;
     model: LanguageModel;
+    environmentConfig?: EnvironmentConfig["config"];
+    tenantId: string;
     sessionId: string;
     eventLog: SqlEventLog;
   }): Promise<unknown>;
@@ -203,6 +209,9 @@ export class SessionRegistry {
     sessionId: string,
     tenantId: string,
   ): Promise<SessionEntry> {
+    const session = await this.deps.sessionsService.get({ tenantId, sessionId });
+    if (!session) throw new Error(`session ${sessionId} not found`);
+    const environmentConfig = session.environment_snapshot?.config;
     const sandboxWorkdir = join(this.deps.sandboxWorkdirRoot, sessionId);
     const sandbox = await this.deps.buildSandbox(sessionId, sandboxWorkdir);
 
@@ -257,12 +266,14 @@ export class SessionRegistry {
       // Node passes no-ops since the work has already been done.
       mountMemoryStores: async () => {},
       mountSessionOutputs: async () => {},
-      buildModel: (agent) => this.deps.buildModel(agent),
-      buildTools: (agent, sb) => this.deps.buildTools(agent, sb),
+      buildModel: (agent) => this.deps.buildModel(agent, tenantId),
+      buildTools: (agent, sb) => this.deps.buildTools(agent, sb, environmentConfig),
       buildHarness: () => this.deps.buildHarness(),
       buildHarnessContext: (input) =>
         this.deps.buildHarnessContext({
           ...input,
+          environmentConfig,
+          tenantId,
           sessionId,
           eventLog,
         }),

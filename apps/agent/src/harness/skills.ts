@@ -19,6 +19,17 @@ export interface SkillFilesResult {
 
 import { skillFileR2Key } from "@open-managed-agents/shared";
 
+interface SkillKv {
+  get(key: string): Promise<string | null>;
+}
+
+interface SkillBlobStore {
+  get(key: string): Promise<{
+    text(): Promise<string>;
+    arrayBuffer(): Promise<ArrayBuffer>;
+  } | null>;
+}
+
 const skillRegistry = new Map<string, Skill>();
 
 export function registerSkill(skill: Skill) {
@@ -45,8 +56,8 @@ export function resolveSkills(skillConfigs: Array<{ skill_id: string }>): Skill[
  */
 export async function resolveCustomSkills(
   skillConfigs: Array<{ skill_id: string; type?: string; version?: string }>,
-  kv: KVNamespace,
-  filesBucket: R2Bucket | undefined,
+  kv: SkillKv,
+  filesBucket: SkillBlobStore | undefined,
   tenantId: string,
 ): Promise<Skill[]> {
   const customConfigs = skillConfigs.filter(
@@ -124,8 +135,8 @@ export async function resolveCustomSkills(
  */
 export async function getSkillFiles(
   skillConfigs: Array<{ skill_id: string; type?: string; version?: string }>,
-  kv: KVNamespace,
-  filesBucket: R2Bucket | undefined,
+  kv: SkillKv,
+  filesBucket: SkillBlobStore | undefined,
   tenantId: string,
 ): Promise<SkillFilesResult[]> {
   if (!filesBucket) return [];

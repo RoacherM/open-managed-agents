@@ -1,5 +1,6 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { authClient } from "./auth-client";
+import { useApiQuery } from "./useApiQuery";
 
 interface User {
   id: string;
@@ -22,8 +23,18 @@ const AuthContext = createContext<AuthCtx>({
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { data: session, isPending } = authClient.useSession();
+  const { data: authInfo, isLoading: isAuthInfoLoading } = useApiQuery<{
+    auth_disabled: boolean;
+  }>("/auth-info");
 
-  const user = session?.user
+  const user = authInfo?.auth_disabled
+    ? {
+        id: "default",
+        name: "Default User",
+        email: "default@local",
+        image: null,
+      }
+    : session?.user
     ? {
         id: session.user.id,
         name: session.user.name,
@@ -44,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // lost (the link's <a> tag is mid-unmount, React Router never
         // sees the navigation). Symptom: random "click does nothing,
         // refresh fixes it".
-        isLoading: isPending && !user,
+        isLoading: isAuthInfoLoading || (isPending && !user),
         isAuthenticated: !!user,
       }}
     >

@@ -421,7 +421,7 @@ interface PersistArgs {
 }
 
 async function persistNewSkill(
-  env: Env,
+  services: Services,
   bucket: BlobStore,
   tenantId: string,
   args: PersistArgs,
@@ -472,8 +472,8 @@ async function persistNewSkill(
   const version: SkillVersion = { version: versionId, files: manifest, created_at: now };
 
   await Promise.all([
-    env.CONFIG_KV.put(kvKey(tenantId, "skill", id), JSON.stringify(skill)),
-    env.CONFIG_KV.put(kvKey(tenantId, "skillver", id, versionId), JSON.stringify(version)),
+    services.kv.put(kvKey(tenantId, "skill", id), JSON.stringify(skill)),
+    services.kv.put(kvKey(tenantId, "skillver", id, versionId), JSON.stringify(version)),
   ]);
 
   const filesOut = await readFilesFromR2(bucket, tenantId, id, versionId, manifest);
@@ -481,7 +481,7 @@ async function persistNewSkill(
 }
 
 async function persistNewVersion(
-  env: Env,
+  services: Services,
   bucket: BlobStore,
   tenantId: string,
   skillId: string,
@@ -490,7 +490,7 @@ async function persistNewVersion(
   | { ok: true; version: SkillVersion; status: 201 }
   | { ok: false; status: number; error: string }
 > {
-  const raw = await env.CONFIG_KV.get(kvKey(tenantId, "skill", skillId));
+  const raw = await services.kv.get(kvKey(tenantId, "skill", skillId));
   if (!raw) return { ok: false, status: 404, error: "Skill not found" };
   const skill: SkillMeta = JSON.parse(raw);
   if (skill.source !== "custom") {
@@ -520,8 +520,8 @@ async function persistNewVersion(
   if (!args.description && extracted.description) skill.description = extracted.description;
 
   await Promise.all([
-    env.CONFIG_KV.put(kvKey(tenantId, "skill", skillId), JSON.stringify(skill)),
-    env.CONFIG_KV.put(kvKey(tenantId, "skillver", skillId, versionId), JSON.stringify(version)),
+    services.kv.put(kvKey(tenantId, "skill", skillId), JSON.stringify(skill)),
+    services.kv.put(kvKey(tenantId, "skillver", skillId, versionId), JSON.stringify(version)),
   ]);
 
   return { ok: true, status: 201, version };
@@ -542,7 +542,7 @@ app.post("/", async (c) => {
   if (!bucket) return c.json({ error: "FILES_BUCKET binding not configured" }, 500);
 
   const body = await c.req.json<PersistArgs>();
-  const result = await persistNewSkill(c.env, bucket, t, body);
+  const result = await persistNewSkill(c.var.services, bucket, t, body);
   if (!result.ok) return c.json({ error: result.error }, result.status as 400 | 500);
   return c.json({ ...toApiSkill(result.skill), files: result.files }, 201);
 });
@@ -597,7 +597,7 @@ app.post("/upload", async (c) => {
       ? (formData.get("display_title") as string)
       : undefined;
 
-  const result = await persistNewSkill(c.env, bucket, t, {
+  const result = await persistNewSkill(c.var.services, bucket, t, {
     files: parsed.files,
     name: parsed.name,
     description: parsed.description,
@@ -740,7 +740,7 @@ app.post("/:id/versions", async (c) => {
 
   const id = c.req.param("id");
   const body = await c.req.json<PersistArgs>();
-  const result = await persistNewVersion(c.env, bucket, t, id, body);
+  const result = await persistNewVersion(c.var.services, bucket, t, id, body);
   if (!result.ok) return c.json({ error: result.error }, result.status as 400 | 403 | 404 | 500);
   return c.json(result.version, 201);
 });
@@ -795,7 +795,7 @@ app.post("/:id/versions/upload", async (c) => {
       : undefined;
 
   const id = c.req.param("id");
-  const result = await persistNewVersion(c.env, bucket, t, id, {
+  const result = await persistNewVersion(c.var.services, bucket, t, id, {
     files: parsed.files,
     display_title: displayTitle,
     description: parsed.description,

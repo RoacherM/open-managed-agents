@@ -50,14 +50,23 @@ import { createSqliteSessionService } from "@open-managed-agents/sessions-store"
 import { createSqliteFileService } from "@open-managed-agents/files-store";
 import { createSqliteEvalRunService } from "@open-managed-agents/evals-store";
 import { createSqliteEnvironmentService } from "@open-managed-agents/environments-store";
+import { toEnvironmentConfig } from "@open-managed-agents/environments-store";
+import { createSqliteModelCardService } from "@open-managed-agents/model-cards-store";
 import { toFileRecord } from "@open-managed-agents/files-store";
 import { SqlEventLog } from "@open-managed-agents/event-log/sql";
 import type { SessionEvent } from "@open-managed-agents/shared";
 import { generateEventId } from "@open-managed-agents/shared";
 import { DefaultHarness } from "@open-managed-agents/agent/harness/default-loop";
 import { buildTools } from "@open-managed-agents/agent/harness/tools";
-import { resolveModel } from "@open-managed-agents/agent/harness/provider";
+import {
+  resolveModel,
+  type ApiCompat,
+} from "@open-managed-agents/agent/harness/provider";
 import { composeSystemPrompt } from "@open-managed-agents/agent/harness/platform-guidance";
+import {
+  getSkillFiles,
+  resolveCustomSkills,
+} from "@open-managed-agents/agent/harness/skills";
 import type { HarnessContext } from "@open-managed-agents/agent/harness/interface";
 import { nodeToMarkdown } from "@open-managed-agents/markdown/adapters/node";
 import { applyBetterAuthSchema } from "@open-managed-agents/schema";
@@ -116,7 +125,7 @@ import type { BrowserHarness } from "@open-managed-agents/browser-harness";
 import { startMemoryBlobWatcher } from "./lib/memory-blob-watcher.js";
 import { buildNodeScheduler } from "./lib/node-scheduler-jobs.js";
 import { startNodeMemoryQueue } from "./lib/node-memory-queue.js";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative } from "node:path";
 import { nanoid } from "nanoid";
 import {
@@ -126,6 +135,10 @@ import {
 import { PgEventStreamHub } from "./lib/pg-event-stream-hub";
 import { NodeHarnessRuntime } from "./lib/node-harness-runtime";
 import { SessionRegistry } from "./registry.js";
+import environmentsRoutes from "@open-managed-agents/main/routes/environments";
+import modelCardsRoutes from "@open-managed-agents/main/routes/model-cards";
+import modelsRoutes from "@open-managed-agents/main/routes/models";
+import skillsRoutes from "@open-managed-agents/main/routes/skills";
 
 const toMarkdownProvider = nodeToMarkdown();
 
@@ -209,7 +222,7 @@ await ensureEventLogSchema(sql, dialect);
 // encrypt OAuth tokens etc.). Tables are part of the consolidated baseline
 // above so they're always created — the gate now only controls subsystem
 // wiring, not schema bootstrap.
-const platformRootSecret = process.env.PLATFORM_ROOT_SECRET;
+const platformRootSecret = resolvePlatformRootSecret();
 
 // ─── Auth ───────────────────────────────────────────────────────────────
 
@@ -275,6 +288,10 @@ const sessionsService = createSqliteSessionService({ db: drizzleDb });
 const filesService = createSqliteFileService({ db: drizzleDb });
 const evalsService = createSqliteEvalRunService({ db: drizzleDb });
 const environmentsService = createSqliteEnvironmentService({ db: drizzleDb });
+const modelCardsService = createSqliteModelCardService(
+  { db: drizzleDb },
+  { crypto: new WebCryptoAesGcm(platformRootSecret, "model.cards.keys") },
+);
 
 let memoryBlobs: import("@open-managed-agents/memory-store").BlobStore;
 let memoryBlobDescription: string;
@@ -478,39 +495,85 @@ const sessionRegistry = new SessionRegistry({
   sql,
   hub,
   agentsService,
+  sessionsService,
   memoryService,
   sandboxOrchestrator,
   newEventLog,
   buildSandbox,
   sandboxWorkdirRoot: process.env.SANDBOX_WORKDIR ?? "./data/sandboxes",
   sqlDialect: dialect,
-  buildModel: (agent) => {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY env var required for harness turns");
-    return resolveModel(
-      agent.model,
-      apiKey,
-      process.env.ANTHROPIC_BASE_URL,
-      undefined,
-      parseCustomHeaders(process.env.ANTHROPIC_CUSTOM_HEADERS),
-    );
-  },
-  buildTools: async (agent, sandbox) => {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY env var required for harness turns");
-    return buildTools(agent, sandbox, {
-      ANTHROPIC_API_KEY: apiKey,
-      ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
-      toMarkdown: toMarkdownProvider,
+  buildModel: async (agent, tenantId) => {
+    const handle =
+      typeof agent.model === "string"
+        ? agent.model
+        : agent.model.id;
+    const card = await modelCardsService.findByModelId({
+      tenantId,
+      modelId: handle,
     });
+    if (!card) {
+      throw new Error(
+        `Model "${handle}" has no active Model Card. Configure it in Model Cards before running the agent.`,
+      );
+    }
+    const apiKey = await modelCardsService.getApiKey({ tenantId, cardId: card.id });
+    if (!apiKey) {
+      throw new Error(
+        `Model Card "${handle}" has no decryptable API key. Update the card in Model Cards.`,
+      );
+    }
+    const provider = card.provider;
+    const compat: ApiCompat | undefined =
+      provider === "ant" ||
+      provider === "ant-compatible" ||
+      provider === "oai" ||
+      provider === "oai-compatible"
+        ? provider
+        : undefined;
+    if (!compat) {
+      throw new Error(`Model Card "${handle}" uses unsupported provider "${provider}".`);
+    }
+    const resolved = resolveModel(
+      card.model,
+      apiKey,
+      card.base_url ?? undefined,
+      compat,
+      card.custom_headers ?? undefined,
+    );
+    logger.info(
+      {
+        op: "main-node.model.resolved",
+        model_id: handle,
+        source: "model_card",
+      },
+      "model resolved for harness turn",
+    );
+    return resolved;
+  },
+  buildTools: async (agent, sandbox, environmentConfig) => {
+    try {
+      const tools = await buildTools(agent, sandbox, {
+        toMarkdown: toMarkdownProvider,
+        environmentConfig,
+      });
+      logger.info(
+        { op: "main-node.tools.built", count: Object.keys(tools).length },
+        "tools built for harness turn",
+      );
+      return tools;
+    } catch (err) {
+      logger.error(
+        { err, op: "main-node.tools.build_failed" },
+        "tool construction failed",
+      );
+      throw err;
+    }
   },
   buildHarness: () => {
     const h = new DefaultHarness();
     return { run: (ctx: unknown) => h.run(ctx as HarnessContext) };
   },
   buildHarnessContext: async (input) => {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY env var required for harness turns");
     const runtime = new NodeHarnessRuntime({
       sessionId: input.sessionId,
       log: input.eventLog,
@@ -519,17 +582,65 @@ const sessionRegistry = new SessionRegistry({
     });
     await runtime.refreshHistory();
     const rawSystemPrompt = input.agent.system ?? "";
+    const reminders = input.agent.skills?.length
+      ? await resolveCustomSkills(
+          input.agent.skills,
+          kv,
+          filesBlob,
+          input.tenantId,
+        )
+      : [];
+    if (input.agent.skills?.length) {
+      const skillFiles = await getSkillFiles(
+        input.agent.skills,
+        kv,
+        filesBlob,
+        input.tenantId,
+      );
+      for (const skill of skillFiles) {
+        const skillDir = `/home/user/.skills/${skill.skillName}`;
+        await input.sandbox.exec(`mkdir -p ${skillDir}`, 5_000);
+        for (const file of skill.files) {
+          if (input.sandbox.writeFileBytes) {
+            await input.sandbox.writeFileBytes(
+              `${skillDir}/${file.filename}`,
+              file.bytes,
+            );
+          } else {
+            await input.sandbox.writeFile(
+              `${skillDir}/${file.filename}`,
+              new TextDecoder().decode(file.bytes),
+            );
+          }
+        }
+      }
+      logger.info(
+        {
+          op: "main-node.skills.mounted",
+          session_id: input.sessionId,
+          requested: input.agent.skills.length,
+          resolved: reminders.length,
+          mounted: skillFiles.length,
+        },
+        "custom skills resolved for harness turn",
+      );
+    }
     return {
       agent: input.agent,
       userMessage: input.userMessage,
       session_id: input.sessionId,
       tools: input.tools as HarnessContext["tools"],
       model: input.model,
-      systemPrompt: composeSystemPrompt(rawSystemPrompt),
+      systemPrompt: composeSystemPrompt(
+        rawSystemPrompt,
+        reminders.map((skill) => ({
+          source: `skill:${skill.id}`,
+          text: skill.system_prompt_addition,
+        })),
+      ),
       rawSystemPrompt,
       env: {
-        ANTHROPIC_API_KEY: apiKey,
-        ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
+        environmentConfig: input.environmentConfig,
       },
       runtime,
     } satisfies HarnessContext;
@@ -590,6 +701,12 @@ const services: RouteServices = {
   logger,
   metrics,
   tracer,
+};
+const controlPlaneServices = {
+  ...services,
+  environments: environmentsService,
+  modelCards: modelCardsService,
+  filesBlob,
 };
 
 // ─── API key storage (SQL) ──────────────────────────────────────────────
@@ -713,6 +830,7 @@ app.get("/health", (c) =>
 
 app.get("/auth-info", (c) =>
   c.json({
+    auth_disabled: authDisabled,
     providers: authDisabled
       ? []
       : [
@@ -775,12 +893,32 @@ const authMw = buildAuthMw({
 });
 
 const v1 = new Hono<{
-  Variables: { tenant_id: string; user_id?: string };
+  Variables: {
+    tenant_id: string;
+    user_id?: string;
+    services: typeof controlPlaneServices;
+  };
 }>();
 v1.use("*", authMw);
+v1.use("*", async (c, next) => {
+  c.set("services", controlPlaneServices);
+  await next();
+});
 
 // Mount route bundles. Same paths CF uses; behavior preserved.
-v1.route("/agents", buildAgentRoutes({ services }));
+v1.route("/agents", buildAgentRoutes({
+  services,
+  validateModel: async (tenantId, model) => {
+    const modelId = typeof model === "string" ? model : model.id;
+    const match = await modelCardsService.findByModelId({ tenantId, modelId });
+    return match
+      ? { valid: true }
+      : {
+          valid: false,
+          error: `No active Model Card with model_id "${modelId}". Create one in Model Cards, then select it in the Agent form.`,
+        };
+  },
+}));
 const sessionRouter = new NodeSessionRouter({
   sql,
   hub,
@@ -792,16 +930,10 @@ v1.route("/sessions", buildSessionRoutes({
   router: sessionRouter,
   outputs: nodeOutputsAdapter(outputsRoot),
   lifecycle: nodeSessionLifecycle({ files: filesService, filesBlob }),
-  // Node has no per-tenant cloud environments yet — every agent is treated
-  // as a local runtime. The package's loadEnvironment hook returns a
-  // synthetic snapshot so session create doesn't 404 on missing env_id.
   localRuntimeEnvId: "env-local-runtime",
-  loadEnvironment: async ({ environmentId }) => {
-    return {
-      id: environmentId,
-      runtime: "local",
-      sandbox_template: null,
-    } as unknown as import("@open-managed-agents/shared").EnvironmentConfig;
+  loadEnvironment: async ({ tenantId, environmentId }) => {
+    const row = await environmentsService.get({ tenantId, environmentId });
+    return row ? toEnvironmentConfig(row) : null;
   },
 }));
 v1.route("/vaults", buildVaultRoutes({ services }));
@@ -855,20 +987,13 @@ v1.route("/evals", buildEvalRoutes({
   // dep undefined so the route accepts any environment_id without 404ing.
 }));
 
+v1.route("/environments", environmentsRoutes);
+v1.route("/skills", skillsRoutes);
+v1.route("/model_cards", modelCardsRoutes);
+v1.route("/models", modelsRoutes);
+
 // Stubs for routes the console hits but main-node doesn't yet implement.
-v1.get("/environments", (c) => c.json({ data: [] }));
 v1.get("/runtimes", (c) => c.json({ data: [] }));
-v1.get("/skills", (c) => c.json({ data: [] }));
-v1.get("/model_cards", (c) => c.json({ data: [] }));
-v1.get("/models/list", (c) =>
-  c.json({
-    data: [
-      { id: "claude-haiku-4-5-20251001", display_name: "Claude Haiku 4.5", speeds: ["standard", "fast"] },
-      { id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6", speeds: ["standard"] },
-      { id: "claude-opus-4-7", display_name: "Claude Opus 4.7", speeds: ["standard"] },
-    ],
-  }),
-);
 v1.get("/integrations/github/credentials", (c) => c.json({ data: [] }));
 v1.get("/integrations/linear/credentials", (c) => c.json({ data: [] }));
 v1.get("/integrations/slack/credentials", (c) => c.json({ data: [] }));
@@ -1243,15 +1368,32 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
-function parseCustomHeaders(raw: string | undefined): Record<string, string> | undefined {
-  if (!raw) return undefined;
-  const out: Record<string, string> = {};
-  for (const part of raw.split(",")) {
-    const [name, ...rest] = part.split(":");
-    if (!name || rest.length === 0) continue;
-    out[name.trim()] = rest.join(":").trim();
+function resolvePlatformRootSecret(): string {
+  const configured = process.env.PLATFORM_ROOT_SECRET?.trim();
+  if (configured) return configured;
+  if (usePostgres) {
+    throw new Error(
+      "PLATFORM_ROOT_SECRET is required with DATABASE_URL so every replica uses the same encryption key.",
+    );
   }
-  return Object.keys(out).length > 0 ? out : undefined;
+
+  const secretPath =
+    process.env.PLATFORM_ROOT_SECRET_FILE ??
+    `${process.env.DATABASE_PATH ?? "./data/oma.db"}.root-secret`;
+  mkdirSync(dirname(secretPath), { recursive: true });
+  if (existsSync(secretPath)) {
+    const persisted = readFileSync(secretPath, "utf8").trim();
+    if (!persisted) throw new Error(`Platform root secret file is empty: ${secretPath}`);
+    return persisted;
+  }
+
+  const generated = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
+  writeFileSync(secretPath, `${generated}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  logger.warn(
+    { op: "main-node.platform_root_secret.generated", path: secretPath },
+    "PLATFORM_ROOT_SECRET not set — generated a persistent key for this SQLite deployment",
+  );
+  return generated;
 }
 
 function randomFallback(): string {

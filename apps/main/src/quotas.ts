@@ -75,10 +75,10 @@ export async function checkDailySessionCap(
  * Returns Response on reject, null on pass.
  */
 export async function checkUploadFreq(
-  env: Env,
+  env: Env | undefined,
   tenantId: string,
 ): Promise<Response | null> {
-  if (!env.RL_UPLOAD_TENANT) return null; // soft-pass when unconfigured
+  if (!env?.RL_UPLOAD_TENANT) return null; // soft-pass when unconfigured
   try {
     const r = await env.RL_UPLOAD_TENANT.limit({ key: `tenant:${tenantId}` });
     if (!r.success) {
@@ -106,8 +106,8 @@ export async function checkUploadFreq(
  * UPLOAD_MAX_BYTES env var (e.g. for self-hosters who legitimately
  * upload large skill bundles).
  */
-export function checkUploadSize(env: Env, req: Request): Response | null {
-  const maxBytes = Number(env.UPLOAD_MAX_BYTES ?? DEFAULT_UPLOAD_MAX_BYTES);
+export function checkUploadSize(env: Env | undefined, req: Request): Response | null {
+  const maxBytes = Number(env?.UPLOAD_MAX_BYTES ?? DEFAULT_UPLOAD_MAX_BYTES);
   const cl = Number(req.headers.get("content-length") ?? "0");
   if (cl > 0 && cl > maxBytes) {
     return Response.json(

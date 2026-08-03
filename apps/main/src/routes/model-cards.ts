@@ -13,6 +13,28 @@ const app = new Hono<{
   Variables: { tenant_id: string; services: Services };
 }>();
 
+const PROVIDERS = ["ant", "ant-compatible", "oai", "oai-compatible"] as const;
+
+function validateProviderConfig(provider: string, baseUrl?: string | null): string | null {
+  if (!(PROVIDERS as readonly string[]).includes(provider)) {
+    return `provider must be one of ${PROVIDERS.join("|")}`;
+  }
+  if (provider.endsWith("-compatible") && !baseUrl) {
+    return "base_url is required for compatible providers";
+  }
+  if (baseUrl) {
+    try {
+      const url = new URL(baseUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        return "base_url must use http or https";
+      }
+    } catch {
+      return "base_url must be a valid URL";
+    }
+  }
+  return null;
+}
+
 /**
  * Adapt a `ModelCardRow` to the public API shape. Drops the row's internal
  * `tenant_id` and converts NULL → undefined for optional fields. Field names
@@ -63,9 +85,11 @@ async function probeModelCard(opts: {
   const isOai = /^(oai|openai|oai-compatible)$/.test(provider);
   if (!isAnt && !isOai) return { ok: null, reason: "unsupported_provider" };
 
+  const rawBase = opts.baseUrl ?? (isAnt ? "https://api.anthropic.com" : "https://api.openai.com/v1");
+  const base = rawBase.replace(/\/+$/, "");
   const url = isAnt
-    ? `${opts.baseUrl ?? "https://api.anthropic.com"}/v1/messages`
-    : `${opts.baseUrl ?? "https://api.openai.com"}/v1/chat/completions`;
+    ? `${/\/v\d+$/.test(base) ? base : `${base}/v1`}/messages`
+    : `${base}/chat/completions`;
   const headers: Record<string, string> = {
     "content-type": "application/json",
     ...(opts.customHeaders ?? {}),
@@ -141,6 +165,8 @@ app.post("/", async (c) => {
   if (!body.model_id || !body.provider || !body.api_key) {
     return c.json({ error: "model_id, provider, and api_key are required" }, 400);
   }
+  const configError = validateProviderConfig(body.provider, body.base_url);
+  if (configError) return c.json({ error: configError }, 400);
   try {
     const card = await c.var.services.modelCards.create({
       tenantId: t,
@@ -181,7 +207,6 @@ app.get("/", async (c) => {
   // Allowing arbitrary strings here would mask client bugs (typo'd
   // "ant " returning nothing looks like "no rows for that provider").
   const providerRaw = c.req.query("provider");
-  const PROVIDERS = ["ant", "ant-compatible", "oai", "oai-compatible"] as const;
   let provider: (typeof PROVIDERS)[number] | undefined;
   if (providerRaw !== undefined) {
     if ((PROVIDERS as readonly string[]).includes(providerRaw)) {
@@ -272,6 +297,13 @@ app.post("/:id", async (c) => {
     custom_headers?: Record<string, string> | null;
     is_default?: boolean;
   }>();
+  const existing = await c.var.services.modelCards.get({ tenantId: t, cardId: id });
+  if (!existing) return c.json({ error: "Model card not found" }, 404);
+  const configError = validateProviderConfig(
+    body.provider ?? existing.provider,
+    body.base_url === undefined ? existing.base_url : body.base_url,
+  );
+  if (configError) return c.json({ error: configError }, 400);
   try {
     const updated = await c.var.services.modelCards.update({
       tenantId: t,

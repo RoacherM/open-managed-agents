@@ -13,7 +13,7 @@
 # Run (compose): see docker-compose.yml at repo root.
 
 # ─── Stage 1: deps (and native compile) ────────────────────────────────────
-FROM node:22-slim AS deps
+FROM node:24-slim AS deps
 
 # better-sqlite3 native build deps. Same recipe as main-node.
 RUN apt-get update \
@@ -33,17 +33,19 @@ COPY apps/console/package.json apps/console/
 COPY apps/docs/package.json apps/docs/
 COPY packages packages
 
-RUN corepack enable \
-  && pnpm install --frozen-lockfile
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org
+RUN --mount=type=cache,id=openma-pnpm,target=/root/.local/share/pnpm/store,sharing=locked \
+  corepack enable \
+  && npm_config_nodedir=/usr/local pnpm install --frozen-lockfile \
+       --fetch-timeout=600000 --registry="$NPM_CONFIG_REGISTRY"
 
 # Now bring in source.
 COPY apps/oma-vault apps/oma-vault
 COPY tsconfig.json ./
 
 # ─── Stage 2: runtime ──────────────────────────────────────────────────────
-FROM node:22-slim AS runtime
+FROM node:24-slim AS runtime
 
-RUN corepack enable
 WORKDIR /app
 
 COPY --from=deps /app /app
@@ -60,4 +62,4 @@ EXPOSE 14322
 USER node
 WORKDIR /app/apps/oma-vault
 
-CMD ["pnpm", "start"]
+CMD ["./node_modules/.bin/tsx", "src/index.ts"]

@@ -170,6 +170,48 @@ describe("multi-tenant KV isolation", () => {
 describe("model cards", () => {
   let cardId: string;
 
+  it("requires a Base URL for compatible providers", async () => {
+    const res = await api("/v1/model_cards", {
+      method: "POST",
+      headers: HEADERS,
+      body: JSON.stringify({
+        provider: "oai-compatible",
+        model_id: "compatible-without-base-url",
+        api_key: "sk-test-compatible",
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error?.message ?? body.error).toContain("base_url");
+  });
+
+  it("does not duplicate /v1 when probing a compatible provider", async () => {
+    let probeUrl = "";
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      probeUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    });
+
+    const res = await api("/v1/model_cards", {
+      method: "POST",
+      headers: HEADERS,
+      body: JSON.stringify({
+        provider: "oai-compatible",
+        model_id: "compatible-probe-path",
+        model: "wire-model",
+        api_key: "sk-test-compatible",
+        base_url: "https://gateway.example.test/v1",
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect(probeUrl).toBe("https://gateway.example.test/v1/chat/completions");
+  });
+
   it("creates a model card", async () => {
     const res = await api("/v1/model_cards", {
       method: "POST",

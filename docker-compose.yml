@@ -4,9 +4,9 @@
 # minio and point the env vars accordingly (see docs/self-host.md).
 #
 # Quick start:
-#   1. Copy .env.example → .env (fill ANTHROPIC_API_KEY)
-#   2. docker compose -f docker-compose.yml up --build
-#   3. curl localhost:8787/health
+#   1. docker compose up --build -d
+#   2. Open http://localhost:8787
+#   3. Add provider credentials under Model Cards in the Console
 #
 # Persistence: ./data on the host is bind-mounted at /app/data in the
 # container, so kill -9 / docker stop don't lose sessions or workdirs.
@@ -16,45 +16,23 @@ services:
     build:
       context: .
       dockerfile: apps/main-node/Dockerfile
+      args:
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}
     image: openma/main-node:dev
-    container_name: oma-server
     ports:
-      - "${OMA_PORT:-8787}:8787"
-    env_file:
-      - path: ./.env
-        required: false
+      - "${OMA_BIND_ADDRESS:-127.0.0.1}:${OMA_PORT:-8787}:8787"
     environment:
-      # Required for harness turns. Put it in .env or pass via shell env.
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # Optional: when pointing at an Anthropic-compat proxy that needs
-      # /v1 in the base URL or custom headers.
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      ANTHROPIC_CUSTOM_HEADERS: ${ANTHROPIC_CUSTOM_HEADERS:-}
-      # Storage paths inside the container — mapped to ./data on host.
-      # All absolute so they don't surprise-resolve relative to pnpm's
-      # cwd (which becomes /app/apps/main-node under `pnpm --filter ... start`).
-      DATABASE_PATH: /app/data/oma.db
-      AUTH_DATABASE_PATH: /app/data/auth.db
-      SANDBOX_WORKDIR: /app/data/sandboxes
-      MEMORY_BLOB_DIR: /app/data/memory-blobs
-      # Backing dir for /mnt/session/outputs/ — AMA-aligned magic dir the
-      # agent uses to deliver downloadable artefacts. Bind-mounted into
-      # ./data so files survive `docker stop`.
-      SESSION_OUTPUTS_DIR: /app/data/session-outputs
-      # Local FS blob store for uploaded files. When FILES_S3_ENDPOINT is
-      # set the S3 backend is used instead and this var is ignored.
-      FILES_BLOB_DIR: /app/data/files-blobs
       # Outbound credential injection via the oma-vault sidecar. When set,
       # LocalSubprocessSandbox.setOutboundContext wires the subprocess env
       # to route HTTPS traffic through oma-vault for header injection.
       OMA_VAULT_PROXY_URL: http://oma-vault:14322
-      OMA_VAULT_CA_CERT: /app/data/oma-vault-ca/ca.crt
-      # Auth: better-auth sqlite-backed. AUTH_DISABLED=1 bypasses entirely
-      # (all requests become tenant_id="default") for local single-user
-      # demos. BETTER_AUTH_SECRET signs cookies; generate with
-      # `openssl rand -hex 32` and put in .env.
+      # One-click self-host defaults to a single local tenant. Set
+      # AUTH_DISABLED=0 plus BETTER_AUTH_SECRET in .env to enable login.
+      AUTH_DISABLED: ${AUTH_DISABLED:-1}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
-      AUTH_DISABLED: ${AUTH_DISABLED:-}
+      # Optional for SQLite (auto-generated when blank); required to keep
+      # existing encrypted rows readable if this deployment already set one.
+      PLATFORM_ROOT_SECRET: ${PLATFORM_ROOT_SECRET:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     volumes:
       - ./data:/app/data
@@ -82,18 +60,13 @@ services:
     build:
       context: .
       dockerfile: apps/oma-vault/Dockerfile
+      args:
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}
     image: openma/oma-vault:dev
-    container_name: oma-vault
     environment:
-      DATABASE_PATH: /app/data/oma.db
-      OMA_VAULT_CA_DIR: /app/data/oma-vault-ca
       OMA_VAULT_PORT: "14322"
-      # Tenant scope. Default "*" matches active credentials across ALL
-      # tenants by hostname — fine for single-operator self-host (every
-      # vault belongs to "me"), unsafe for shared multi-tenant deploys
-      # where two tenants might both register the same host. Override
-      # with OMA_TENANT=tn_xxx in .env for multi-user prod.
-      OMA_TENANT: ${OMA_TENANT:-*}
+      # Compose defaults to the same tenant used by AUTH_DISABLED mode.
+      OMA_TENANT: ${OMA_TENANT:-default}
     volumes:
       - ./data:/app/data
     restart: unless-stopped

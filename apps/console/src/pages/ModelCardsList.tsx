@@ -107,6 +107,10 @@ export function ModelCardsList() {
       setError("Model ID and API Key are required.");
       return;
     }
+    if (!OFFICIAL_PROVIDERS.has(form.provider) && !form.base_url) {
+      setError("Base URL is required for compatible providers.");
+      return;
+    }
     try {
       const payload: Record<string, unknown> = {
         provider: form.provider,
@@ -344,7 +348,7 @@ export function ModelCardsList() {
           <>
             <p>Add a model card to configure API credentials for your agents.</p>
             <p className="text-xs mt-3">
-              Without model cards, agents use the environment ANTHROPIC_API_KEY.
+              Agent models must reference a Model ID configured here.
             </p>
           </>
         )
@@ -368,7 +372,16 @@ export function ModelCardsList() {
               </Button>
             )}
             <Button variant="ghost" onClick={closeDialog}>Cancel</Button>
-            <Button onClick={save} disabled={!form.model_id || (!editingId && !form.api_key)}>{editingId ? "Save" : "Create"}</Button>
+            <Button
+              onClick={save}
+              disabled={
+                !form.model_id ||
+                (!editingId && !form.api_key) ||
+                (!OFFICIAL_PROVIDERS.has(form.provider) && !form.base_url)
+              }
+            >
+              {editingId ? "Save" : "Create"}
+            </Button>
           </>
         }>
         <form autoComplete="off" onSubmit={(e) => e.preventDefault()} className="space-y-3">

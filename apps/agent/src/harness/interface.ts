@@ -228,7 +228,7 @@ export interface HarnessContext {
   fileFetcher?: FileResolver;
 
   env: {
-    ANTHROPIC_API_KEY: string;
+    ANTHROPIC_API_KEY?: string;
     ANTHROPIC_BASE_URL?: string;
     ANTHROPIC_MODEL?: string;
     TAVILY_API_KEY?: string;

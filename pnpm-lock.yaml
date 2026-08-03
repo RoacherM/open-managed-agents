@@ -375,7 +375,7 @@ importers:
         version: 5.2.8
       '@openma/common':
         specifier: github:openma-ai/openma-common#v0.4.0
-        version: https://codeload.github.com/openma-ai/openma-common/tar.gz/e5e6f9e68d49e646afe38eae0b579b1ac4320c29(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@4.4.3)
+        version: https://codeload.github.com/openma-ai/openma-common/tar.gz/e5e6f9e68d49e646afe38eae0b579b1ac4320c29(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@4.3.6)
       astro:
         specifier: ^6.1.9
         version: 6.1.9(@types/node@26.1.2)(aws4fetch@1.0.20)(jiti@2.6.1)(lightningcss@1.33.0)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.4)
@@ -611,12 +611,18 @@ importers:
       '@open-managed-agents/linear':
         specifier: workspace:*
         version: link:../../packages/linear
+      '@open-managed-agents/main':
+        specifier: workspace:*
+        version: link:../main
       '@open-managed-agents/markdown':
         specifier: workspace:*
         version: link:../../packages/markdown
       '@open-managed-agents/memory-store':
         specifier: workspace:*
         version: link:../../packages/memory-store
+      '@open-managed-agents/model-cards-store':
+        specifier: workspace:*
+        version: link:../../packages/model-cards-store
       '@open-managed-agents/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -664,7 +670,7 @@ importers:
         version: link:../../packages/vaults-store
       ai:
         specifier: ^7.0.42
-        version: 7.0.42(zod@4.4.3)
+        version: 7.0.42(zod@4.3.6)
       better-auth:
         specifier: ^1.6.3
         version: 1.6.3(@cloudflare/workers-types@5.20260728.1)(@opentelemetry/api@1.9.0)(better-sqlite3@11.10.0)(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@cloudflare/workers-types@5.20260728.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@11.10.0)(kysely@0.28.16)(pg@8.20.0)(postgres@3.4.9))(pg@8.20.0)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(vitest@4.1.4(@opentelemetry/api@1.9.0)(@types/node@26.1.2)(jsdom@29.1.1(@noble/hashes@2.2.0))(msw@2.14.6(@types/node@26.1.2)(typescript@5.9.3))(vite@8.0.8(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.4)))
@@ -768,7 +774,7 @@ importers:
         version: 5.2.8
       '@openma/common':
         specifier: github:openma-ai/openma-common#v0.4.0
-        version: https://codeload.github.com/openma-ai/openma-common/tar.gz/e5e6f9e68d49e646afe38eae0b579b1ac4320c29(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@4.4.3)
+        version: https://codeload.github.com/openma-ai/openma-common/tar.gz/e5e6f9e68d49e646afe38eae0b579b1ac4320c29(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@4.3.6)
       '@tailwindcss/vite':
         specifier: ^4.1.0
         version: 4.2.2(vite@8.0.8(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.4))
@@ -889,7 +895,7 @@ importers:
         version: link:../api-types
       '@openma/common':
         specifier: github:openma-ai/openma-common#v0.4.0
-        version: https://codeload.github.com/openma-ai/openma-common/tar.gz/e5e6f9e68d49e646afe38eae0b579b1ac4320c29(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@4.4.3)
+        version: https://codeload.github.com/openma-ai/openma-common/tar.gz/e5e6f9e68d49e646afe38eae0b579b1ac4320c29(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@4.3.6)
       '@types/node':
         specifier: ^26.1.2
         version: 26.1.2
@@ -1486,7 +1492,7 @@ importers:
         version: link:../sql-client
       ai:
         specifier: ^7.0.42
-        version: 7.0.42(zod@4.4.3)
+        version: 7.0.42(zod@4.3.6)
       nanoid:
         specifier: ^5.1.0
         version: 5.1.9
@@ -11139,6 +11145,10 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
+  '@agentclientprotocol/sdk@0.25.1(zod@4.3.6)':
+    dependencies:
+      zod: 4.3.6
+
   '@agentclientprotocol/sdk@0.25.1(zod@4.4.3)':
     dependencies:
       zod: 4.4.3
@@ -13589,6 +13599,15 @@ snapshots:
   '@openma/common@https://codeload.github.com/openma-ai/openma-common/tar.gz/e5e6f9e68d49e646afe38eae0b579b1ac4320c29(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@3.25.76)':
     dependencies:
       '@agentclientprotocol/sdk': 0.25.1(zod@3.25.76)
+    optionalDependencies:
+      react: 19.2.5
+      react-dom: 19.2.5(react@19.2.5)
+    transitivePeerDependencies:
+      - zod
+
+  '@openma/common@https://codeload.github.com/openma-ai/openma-common/tar.gz/e5e6f9e68d49e646afe38eae0b579b1ac4320c29(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@4.3.6)':
+    dependencies:
+      '@agentclientprotocol/sdk': 0.25.1(zod@4.3.6)
     optionalDependencies:
       react: 19.2.5
       react-dom: 19.2.5(react@19.2.5)

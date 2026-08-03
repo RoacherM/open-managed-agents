@@ -7,7 +7,7 @@
 # Run (standalone):
 #   docker run --rm -p 8787:8787 \
 #     -v $(pwd)/data:/app/data \
-#     -e ANTHROPIC_API_KEY=sk-... \
+#     -e AUTH_DISABLED=1 \
 #     openma/main-node:dev
 # Run (compose): see docker-compose.yml at repo root.
 #
@@ -15,11 +15,11 @@
 #   - Compiled JS bundle. We run via tsx in the container too — same toolchain
 #     as `pnpm --filter main-node start`. Adds ~30MB tsx + slows cold start
 #     by ~150ms vs a pre-bundled dist; trivial relative to LLM round-trips.
-#   - Distroless / scratch base. node:22-slim is ~150MB, fine for a self-host
+#   - Distroless / scratch base. node:24-slim is fine for a self-host
 #     audience. Switch to distroless when packaging matters.
 
 # ─── Stage 1: deps (and native compile) ────────────────────────────────────
-FROM node:22-slim AS deps
+FROM node:24-slim AS deps
 
 # better-sqlite3 ships a prebuilt binary for common targets but on
 # arm64-glibc-Linux it falls back to compiling from source. python3 +
@@ -44,8 +44,11 @@ COPY packages packages
 # Install workspace deps. --frozen-lockfile fails fast on lockfile drift.
 # Build approval list at .pnpm-approve-builds.json covers better-sqlite3 +
 # esbuild + workerd + the anthropic tokeniser.
-RUN corepack enable \
-  && pnpm install --frozen-lockfile
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org
+RUN --mount=type=cache,id=openma-pnpm,target=/root/.local/share/pnpm/store,sharing=locked \
+  corepack enable \
+  && npm_config_nodedir=/usr/local pnpm install --frozen-lockfile \
+       --fetch-timeout=600000 --registry="$NPM_CONFIG_REGISTRY"
 
 # Now bring in the source code (cache-busts only on src changes, not deps).
 COPY apps/main-node apps/main-node
@@ -66,22 +69,18 @@ RUN if [ "$SKIP_CONSOLE" != "1" ]; then \
     fi
 
 # ─── Stage 2: runtime ──────────────────────────────────────────────────────
-FROM node:22-slim AS runtime
+FROM node:24-slim AS runtime
 
-# Tools the agent's bash subprocess relies on. node:22-slim ships almost
+# Tools the agent's bash subprocess relies on. node:24-slim ships almost
 # nothing — `curl`, `git`, `ca-certificates` are the bare minimum for the
 # harness's bash + read/write/web_fetch tools to do anything useful.
 # `python3` is here so build-tooling that shells out to `python` (mostly
 # memory store demos + agent-written scripts) doesn't immediately die.
 # tsx + better-sqlite3 native module also need basic runtime libs only.
-# corepack is needed at runtime so `pnpm start` resolves; alternatively we
-# could invoke tsx directly via node_modules/.bin but corepack matches the
-# dev workflow exactly.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
        curl ca-certificates git python3 \
-  && rm -rf /var/lib/apt/lists/* \
-  && corepack enable
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # Copy the whole monorepo from deps (includes node_modules, source, schemas
@@ -98,7 +97,13 @@ ENV NODE_ENV=production
 ENV PORT=8787
 ENV HOST=0.0.0.0
 ENV DATABASE_PATH=/app/data/oma.db
+ENV AUTH_DATABASE_PATH=/app/data/auth.db
 ENV SANDBOX_WORKDIR=/app/data/sandboxes
+ENV MEMORY_BLOB_DIR=/app/data/memory-blobs
+ENV SESSION_OUTPUTS_DIR=/app/data/session-outputs
+ENV FILES_BLOB_DIR=/app/data/files-blobs
+ENV PLATFORM_ROOT_SECRET_FILE=/app/data/platform-root-secret
+ENV OMA_VAULT_CA_CERT=/app/data/oma-vault-ca/ca.crt
 # Console SPA is at /app/apps/console/dist (built in the deps stage).
 # main-node's serveStatic middleware mounts it at "/*" with index.html
 # fallback. Unset CONSOLE_DIR (or build with --build-arg SKIP_CONSOLE=1)
@@ -109,6 +114,5 @@ EXPOSE 8787
 USER node
 WORKDIR /app/apps/main-node
 
-# tsx is the entry. SIGTERM is handled by main-node/src/index.ts for
-# graceful shutdown.
-CMD ["pnpm", "start"]
+# Invoke the installed binary directly so container startup never downloads pnpm.
+CMD ["./node_modules/.bin/tsx", "src/index.ts"]
