@@ -26,10 +26,35 @@ export interface Event {
    *  in-flight chunks with the eventually-committed message. */
   message_id?: string;
   delta?: string;
-  /** ISO timestamp. Server sets it for stored events; the client tags
-   *  streamed events on arrival with Date.now() as a best-effort fallback. */
-  ts?: string;
+  /** Stored events use numeric epoch timestamps (seconds on Cloudflare,
+   *  milliseconds on Node); live-only events use an ISO arrival time. */
+  ts?: string | number;
   /** Server-side monotonic seq. Only set for events fetched from /events. */
   seq?: number;
   [key: string]: unknown;
+}
+
+/** Normalize every event timestamp shape used by the two runtimes. */
+export function eventTimestampMs(event: Event): number | null {
+  const processedAt =
+    (event.data as { processed_at?: string } | undefined)?.processed_at ??
+    (event as { processed_at?: string }).processed_at;
+  if (typeof processedAt === "string") {
+    const parsed = Date.parse(processedAt);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  const processedAtMs = (event as { processed_at_ms?: number }).processed_at_ms;
+  if (typeof processedAtMs === "number" && Number.isFinite(processedAtMs)) {
+    return processedAtMs;
+  }
+
+  if (typeof event.ts === "number" && Number.isFinite(event.ts)) {
+    return event.ts < 1_000_000_000_000 ? event.ts * 1000 : event.ts;
+  }
+  if (typeof event.ts === "string") {
+    const parsed = Date.parse(event.ts);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
 }

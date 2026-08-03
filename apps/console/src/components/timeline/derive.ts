@@ -1,5 +1,5 @@
 import { formatDuration } from "../../lib/format";
-import type { Event } from "../../lib/events";
+import { eventTimestampMs, type Event } from "../../lib/events";
 import type { Span, Turn, TurnTriggerKind } from "./types";
 
 /**
@@ -11,24 +11,14 @@ import type { Span, Turn, TurnTriggerKind } from "./types";
  * markers. Each span carries its source events so the side detail panel
  * can show the underlying JSON without re-walking the stream.
  *
- * timestamp basis is `processed_at` (millisecond ISO string set by
- * SessionDO at write time). The legacy `ts` field is unix SECONDS and
- * collapses sub-second events together — only used as a fallback for
- * very old sessions that predate processed_at.
+ * Timestamp basis is `processed_at` when present. `ts` is the fallback;
+ * eventTimestampMs normalizes the Cloudflare seconds and Node milliseconds
+ * wire formats before any duration math happens.
  */
 export function deriveSpans(events: Event[]): { spans: Span[]; totalMs: number } {
-  const tsMs = (e: Event): number | null => {
-    const pa = (e.data as { processed_at?: string } | undefined)?.processed_at
-      ?? (e as { processed_at?: string }).processed_at;
-    if (typeof pa === "string") {
-      const t = Date.parse(pa);
-      if (Number.isFinite(t)) return t;
-    }
-    if (typeof e.ts === "number") return e.ts * 1000;
-    return null;
-  };
-
-  const timed = events.map((e) => ({ e, t: tsMs(e) })).filter((x): x is { e: Event; t: number } => x.t !== null);
+  const timed = events
+    .map((e) => ({ e, t: eventTimestampMs(e) }))
+    .filter((x): x is { e: Event; t: number } => x.t !== null);
   if (timed.length === 0) return { spans: [], totalMs: 0 };
 
   const t0 = timed[0].t;
@@ -280,12 +270,7 @@ export function deriveSpans(events: Event[]): { spans: Span[]; totalMs: number }
 }
 
 function parseEventTs(e: Event): number {
-  const ts = (e as { processed_at?: string }).processed_at;
-  if (typeof ts === "string") {
-    const t = new Date(ts).getTime();
-    if (Number.isFinite(t)) return t;
-  }
-  return 0;
+  return eventTimestampMs(e) ?? 0;
 }
 
 /**

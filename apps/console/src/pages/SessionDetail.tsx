@@ -15,7 +15,7 @@ import {
   TrajectoryViewerModal,
 } from "./session-detail/Trajectory";
 import { TimelineView } from "../components/timeline/TimelineView";
-import type { Event } from "../lib/events";
+import { eventTimestampMs, type Event } from "../lib/events";
 import {
   projectCanonicalChatTurns,
   type WireSessionEvent,
@@ -539,7 +539,7 @@ export function SessionDetail() {
       for (let i = 0; i < 500; i++) {
         try {
           const res = await api<{
-            data: Array<{ seq?: number; type: string; ts?: string; data: Event }>;
+            data: Array<{ seq?: number; type: string; ts?: Event["ts"]; data: Event }>;
             has_more?: boolean;
             next_page?: string | null;
           }>(`/v1/sessions/${id}/events?limit=${pageLimit}&order=asc&after_seq=${afterSeq}`);
@@ -1296,10 +1296,8 @@ function SessionDurationBadge({ events }: { events: Event[] }) {
   let first = Infinity;
   let last = -Infinity;
   for (const e of events) {
-    const ts = (e as { processed_at?: string }).processed_at;
-    if (typeof ts !== "string") continue;
-    const t = new Date(ts).getTime();
-    if (!Number.isFinite(t)) continue;
+    const t = eventTimestampMs(e);
+    if (t === null) continue;
     if (t < first) first = t;
     if (t > last) last = t;
   }

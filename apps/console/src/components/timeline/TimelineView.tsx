@@ -270,7 +270,7 @@ function TurnCard({
   // pickTickStep takes a "total span across 6 ticks" arg, so multiply
   // the desired step by 6 to get a step matching ~120px gaps.
   const desiredStepMs = 120 / effectivePxPerMs;
-  const tickStep = pickTickStep(desiredStepMs * 6);
+  const tickStep = Math.max(pickTickStep(desiredStepMs * 6), Math.ceil(totalMs / 200));
   const ticks: number[] = [];
   for (let t = 0; t <= totalMs; t += tickStep) ticks.push(t);
 
