@@ -212,6 +212,18 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(
+      null,
+      bytes.subarray(i, i + chunkSize) as unknown as number[],
+    );
+  }
+  return btoa(binary);
+}
+
 /** File extensions that Read returns as IMAGE content blocks (Claude/GPT-4o/Grok native). */
 const IMAGE_EXTENSIONS: Record<string, string> = {
   png: "image/png",
@@ -485,17 +497,21 @@ export async function buildTools(
         const docMedia = DOCUMENT_EXTENSIONS[ext];
 
         if (imageMedia || docMedia) {
-          // Binary file (image or PDF): base64-encode via shell, return as
-          // Anthropic-shape ContentBlock (image or document). toModelOutput below
-          // converts to AI SDK content shape for the model.
-          const raw = await sandbox.exec(
-            `(base64 -w0 ${shellQuote(file_path)} 2>/dev/null || base64 ${shellQuote(file_path)} | tr -d '\\n')`,
-          );
-          const m = raw.match(/^exit=(-?\d+)\n([\s\S]*)$/);
-          if (!m) return raw;
-          const code = parseInt(m[1], 10);
-          if (code !== 0) return `Error reading file (exit=${code}): ${m[2].slice(0, 200)}`;
-          const data = m[2].trimEnd();
+          // Prefer the sandbox's binary-safe file API. Parsing base64 from
+          // exec() is only a fallback for runtimes that do not expose it.
+          let data: string;
+          if (sandbox.readFileBytes) {
+            data = bytesToBase64(await sandbox.readFileBytes(file_path));
+          } else {
+            const raw = await sandbox.exec(
+              `(base64 -w0 ${shellQuote(file_path)} 2>/dev/null || base64 ${shellQuote(file_path)} | tr -d '\\n')`,
+            );
+            const m = raw.match(/^exit=(-?\d+)\n([\s\S]*)$/);
+            if (!m) return raw;
+            const code = parseInt(m[1], 10);
+            if (code !== 0) return `Error reading file (exit=${code}): ${m[2].slice(0, 200)}`;
+            data = m[2].trimEnd();
+          }
           if (!data) return "Error: file is empty or unreadable";
 
           if (imageMedia) {

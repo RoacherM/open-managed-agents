@@ -132,6 +132,40 @@ describe("Built-in tool execution", () => {
     expect(result).toContain("test");
   });
 
+  it("read tool uses binary file reads for images and PDFs without exec", async () => {
+    let execCalled = false;
+    const sandbox: any = {
+      exec: async () => {
+        execCalled = true;
+        return "unexpected";
+      },
+      readFile: async () => "",
+      readFileBytes: async () => new Uint8Array([0xff, 0xd8, 0xff]),
+      writeFile: async () => "ok",
+    };
+    const tools = await buildTools(makeAgentConfig(), sandbox);
+
+    for (const [filePath, rawType, mediaType] of [
+      ["/workspace/image.jpg", "image", "image/jpeg"],
+      ["/workspace/document.pdf", "document", "application/pdf"],
+    ]) {
+      const output = await tools.read.execute(
+        { file_path: filePath },
+        TOOL_EXEC_OPTS,
+      );
+      expect(output).toEqual({
+        type: rawType,
+        source: { type: "base64", media_type: mediaType, data: "/9j/" },
+      });
+      expect(tools.read.toModelOutput({ output })).toEqual({
+        type: "content",
+        value: [{ type: "file-data", mediaType, data: "/9j/" }],
+      });
+    }
+
+    expect(execCalled).toBe(false);
+  });
+
   it("write tool calls writeFile with path and content", async () => {
     const sandbox = new TestSandbox();
     const tools = await buildTools(makeAgentConfig(), sandbox);
