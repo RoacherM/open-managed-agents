@@ -60,6 +60,7 @@ type ToolOverride = "default" | "always_allow" | "always_ask" | "disabled";
 const INITIAL_FORM = {
   name: "",
   model: "",
+  harness: "default" as "default" | "pi",
   system: "",
   description: "",
   modelCardId: "",
@@ -145,6 +146,7 @@ export function AgentFormDialog({
   const [createMode, setCreateMode] = useState<"form" | "yaml" | "json">("form");
   const [codeValue, setCodeValue] = useState("");
   const [showMcpPicker, setShowMcpPicker] = useState(false);
+  const [supportsPi, setSupportsPi] = useState(false);
 
   const createDialogRef = useRef<HTMLDivElement>(null);
   const createPreviousFocus = useRef<HTMLElement | null>(null);
@@ -208,6 +210,21 @@ export function AgentFormDialog({
     // on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void api<{ runtime?: string }>("/health")
+      .then((health) => {
+        if (!cancelled) setSupportsPi(health.runtime === "node");
+      })
+      .catch(() => {
+        if (!cancelled) setSupportsPi(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -280,11 +297,9 @@ export function AgentFormDialog({
       if (form.enableGeneralSubagent) {
         payload.enable_general_subagent = true;
       }
-      // Local-runtime agent: opt into acp-proxy harness when both runtimeId
-      // and acpAgentId are set. Partial config silently falls back to the
-      // default cloud loop — same semantics as the CLI flag pair.
-      if (form.runtimeId && form.acpAgentId) {
-        payload._oma = {
+      payload._oma =
+        form.runtimeId && form.acpAgentId
+          ? {
           harness: "acp-proxy",
           runtime_binding: {
             runtime_id: form.runtimeId,
@@ -293,8 +308,8 @@ export function AgentFormDialog({
               ? { local_skill_blocklist: form.localSkillBlocklist }
               : {}),
           },
-        };
-      }
+            }
+          : { harness: form.harness };
 
       const agent = await api<Agent>("/v1/agents", {
         method: "POST",
@@ -385,6 +400,19 @@ export function AgentFormDialog({
     if (form.enableGeneralSubagent) {
       config.enable_general_subagent = true;
     }
+    config._oma =
+      form.runtimeId && form.acpAgentId
+        ? {
+            harness: "acp-proxy",
+            runtime_binding: {
+              runtime_id: form.runtimeId,
+              acp_agent_id: form.acpAgentId,
+              ...(form.localSkillBlocklist.length > 0
+                ? { local_skill_blocklist: form.localSkillBlocklist }
+                : {}),
+            },
+          }
+        : { harness: form.harness };
     return config;
   };
 
@@ -404,7 +432,15 @@ export function AgentFormDialog({
           createMode === "yaml"
             ? (yaml.load(codeValue) as Record<string, unknown>)
             : JSON.parse(codeValue);
-        const rb = parsed.runtime_binding as
+        const oma = (parsed._oma ?? {}) as {
+          harness?: unknown;
+          runtime_binding?: {
+            runtime_id?: string;
+            acp_agent_id?: string;
+            local_skill_blocklist?: string[];
+          };
+        };
+        const rb = (oma.runtime_binding ?? parsed.runtime_binding) as
           | { runtime_id?: string; acp_agent_id?: string; local_skill_blocklist?: string[] }
           | undefined;
         // Tool policy round-trip: extract default + per-tool overrides
@@ -436,6 +472,7 @@ export function AgentFormDialog({
           ...INITIAL_FORM,
           name: String(parsed.name || ""),
           model: String(parsed.model || ""),
+          harness: (oma.harness ?? parsed.harness) === "pi" ? "pi" : "default",
           system: String(parsed.system || ""),
           description: String(parsed.description || ""),
           mcpServers: Array.isArray(parsed.mcp_servers)
@@ -735,6 +772,7 @@ export function AgentFormDialog({
                     modelCards={modelCards}
                     runtimes={runtimes}
                     selectedCardId={selectedCardId}
+                    supportsPi={supportsPi}
                   />
                 )}
 
@@ -838,6 +876,7 @@ interface BasicTabProps {
   modelCards: ModelCard[];
   runtimes: AgentFormDialogProps["runtimes"];
   selectedCardId: string;
+  supportsPi: boolean;
 }
 
 function BasicTab({
@@ -848,6 +887,7 @@ function BasicTab({
   modelCards,
   runtimes,
   selectedCardId,
+  supportsPi,
 }: BasicTabProps) {
   return (
     <div className="space-y-3">
@@ -922,6 +962,29 @@ function BasicTab({
         </p>
       )}
       <div>
+        <label className="text-sm text-fg-muted block mb-1">Harness</label>
+        <Select
+          value={form.harness}
+          onValueChange={(value) =>
+            setForm({ ...form, harness: value === "pi" ? "pi" : "default" })
+          }
+          disabled={Boolean(form.runtimeId)}
+          placeholder="Select harness"
+        >
+          <SelectOption value="default">Default</SelectOption>
+          <SelectOption value="pi" disabled={!supportsPi}>
+            Pi (Node self-host only)
+          </SelectOption>
+        </Select>
+        <p className="text-xs text-fg-subtle mt-1">
+          {form.runtimeId
+            ? "Local Runtime uses its selected ACP harness."
+            : supportsPi
+              ? "Pi runs through the AI SDK HarnessV1 adapter."
+              : "Pi is available when the Console is connected to the Node self-host runtime."}
+        </p>
+      </div>
+      <div>
         <label htmlFor="agent-description" className="text-sm text-fg-muted block mb-1">
           Description
         </label>
@@ -974,6 +1037,7 @@ function BasicTab({
                 setForm({
                   ...form,
                   runtimeId: rid,
+                  harness: rid ? "default" : form.harness,
                   acpAgentId: rid && first ? first : form.acpAgentId,
                 });
               }}

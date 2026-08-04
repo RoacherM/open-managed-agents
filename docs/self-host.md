@@ -80,6 +80,15 @@ AUTH_DISABLED=1 pnpm --filter @open-managed-agents/main-node start
 State lives at `./data/` (sqlite db + per-session sandbox workdirs).
 Wipe + restart for a clean slate.
 
+### Select the Pi harness
+
+Node self-host supports `default` and the official AI SDK HarnessV1-backed `pi`
+backend. Provider credentials still come from Console → Model Cards; no Pi-specific
+provider key is required in `.env`. Select **Pi** in the Agent form's **Harness** field,
+or set `_oma.harness: pi` in the YAML/JSON editor. Configuration, sandbox boundaries,
+and current limitations are documented in
+[harness-pi.md](./harness-pi.md).
+
 ## Postgres backend
 
 When to flip to Postgres: multi-instance, large tables (50M+ rows on

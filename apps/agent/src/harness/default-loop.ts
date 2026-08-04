@@ -49,7 +49,7 @@ function extractMcpServerName(toolName: string): string {
  * Lives outside DefaultHarness so the bijection contract is co-located
  * with `eventsToMessages` — the inverse mapping in history.ts.
  */
-function emitToolCallEvent(
+export function emitToolCallEvent(
   runtime: HarnessContext["runtime"],
   tools: Record<string, any>,
   part: ContentPart<any> & { type: "tool-call" },
@@ -129,7 +129,7 @@ function threadSentEventId(toolCallId: string): string {
  *   already-shaped ContentBlock or ContentBlock[] (legacy tool returns)
  *                → wrap or pass through
  */
-function emitToolResultEvent(
+export function emitToolResultEvent(
   runtime: HarnessContext["runtime"],
   part: ContentPart<any> & { type: "tool-result" | "tool-error" },
 ): void {

@@ -57,6 +57,7 @@ import { SqlEventLog } from "@open-managed-agents/event-log/sql";
 import type { SessionEvent } from "@open-managed-agents/shared";
 import { generateEventId } from "@open-managed-agents/shared";
 import { DefaultHarness } from "@open-managed-agents/agent/harness/default-loop";
+import { createPi } from "@ai-sdk/harness-pi";
 import { buildTools } from "@open-managed-agents/agent/harness/tools";
 import {
   resolveModel,
@@ -126,7 +127,9 @@ import { startMemoryBlobWatcher } from "./lib/memory-blob-watcher.js";
 import { buildNodeScheduler } from "./lib/node-scheduler-jobs.js";
 import { startNodeMemoryQueue } from "./lib/node-memory-queue.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, relative } from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
 import { nanoid } from "nanoid";
 import {
   InProcessEventStreamHub,
@@ -134,6 +137,13 @@ import {
 } from "./lib/event-stream-hub";
 import { PgEventStreamHub } from "./lib/pg-event-stream-hub";
 import { NodeHarnessRuntime } from "./lib/node-harness-runtime";
+import { createOpenMaHarnessSandbox } from "./lib/ai-sdk-harness-sandbox";
+import {
+  AiSdkHarnessDriver,
+  resolveNodeHarness,
+  routePiToolsThroughOpenMa,
+  toPiModelCardConfig,
+} from "./lib/pi-harness-driver";
 import { SessionRegistry } from "./registry.js";
 import environmentsRoutes from "@open-managed-agents/main/routes/environments";
 import modelCardsRoutes from "@open-managed-agents/main/routes/model-cards";
@@ -502,148 +512,212 @@ const sessionRegistry = new SessionRegistry({
   buildSandbox,
   sandboxWorkdirRoot: process.env.SANDBOX_WORKDIR ?? "./data/sandboxes",
   sqlDialect: dialect,
-  buildModel: async (agent, tenantId) => {
-    const handle =
-      typeof agent.model === "string"
-        ? agent.model
-        : agent.model.id;
-    const card = await modelCardsService.findByModelId({
-      tenantId,
-      modelId: handle,
-    });
-    if (!card) {
-      throw new Error(
-        `Model "${handle}" has no active Model Card. Configure it in Model Cards before running the agent.`,
-      );
-    }
-    const apiKey = await modelCardsService.getApiKey({ tenantId, cardId: card.id });
-    if (!apiKey) {
-      throw new Error(
-        `Model Card "${handle}" has no decryptable API key. Update the card in Model Cards.`,
-      );
-    }
-    const provider = card.provider;
-    const compat: ApiCompat | undefined =
-      provider === "ant" ||
-      provider === "ant-compatible" ||
-      provider === "oai" ||
-      provider === "oai-compatible"
-        ? provider
-        : undefined;
-    if (!compat) {
-      throw new Error(`Model Card "${handle}" uses unsupported provider "${provider}".`);
-    }
-    const resolved = resolveModel(
-      card.model,
-      apiKey,
-      card.base_url ?? undefined,
-      compat,
-      card.custom_headers ?? undefined,
-    );
-    logger.info(
-      {
-        op: "main-node.model.resolved",
-        model_id: handle,
-        source: "model_card",
-      },
-      "model resolved for harness turn",
-    );
-    return resolved;
-  },
-  buildTools: async (agent, sandbox, environmentConfig) => {
-    try {
-      const tools = await buildTools(agent, sandbox, {
-        toMarkdown: toMarkdownProvider,
-        environmentConfig,
-      });
-      logger.info(
-        { op: "main-node.tools.built", count: Object.keys(tools).length },
-        "tools built for harness turn",
-      );
-      return tools;
-    } catch (err) {
-      logger.error(
-        { err, op: "main-node.tools.build_failed" },
-        "tool construction failed",
-      );
-      throw err;
-    }
-  },
-  buildHarness: () => {
-    const h = new DefaultHarness();
-    return { run: (ctx: unknown) => h.run(ctx as HarnessContext) };
-  },
-  buildHarnessContext: async (input) => {
-    const runtime = new NodeHarnessRuntime({
-      sessionId: input.sessionId,
-      log: input.eventLog,
-      hub,
-      sandbox: input.sandbox,
-    });
-    await runtime.refreshHistory();
-    const rawSystemPrompt = input.agent.system ?? "";
-    const reminders = input.agent.skills?.length
-      ? await resolveCustomSkills(
-          input.agent.skills,
-          kv,
-          filesBlob,
-          input.tenantId,
-        )
-      : [];
-    if (input.agent.skills?.length) {
-      const skillFiles = await getSkillFiles(
-        input.agent.skills,
-        kv,
-        filesBlob,
-        input.tenantId,
-      );
-      for (const skill of skillFiles) {
-        const skillDir = `/home/user/.skills/${skill.skillName}`;
-        await input.sandbox.exec(`mkdir -p ${skillDir}`, 5_000);
-        for (const file of skill.files) {
-          if (input.sandbox.writeFileBytes) {
-            await input.sandbox.writeFileBytes(
-              `${skillDir}/${file.filename}`,
-              file.bytes,
-            );
-          } else {
-            await input.sandbox.writeFile(
-              `${skillDir}/${file.filename}`,
-              new TextDecoder().decode(file.bytes),
-            );
+  createHarnessController: async ({
+    sandbox,
+    environmentConfig,
+    tenantId,
+    sessionId,
+    eventLog,
+  }) => {
+    let selected: ReturnType<typeof resolveNodeHarness> | undefined;
+    let activeAbort: AbortController | undefined;
+    let piDriver: AiSdkHarnessDriver | undefined;
+    let piAgentDir: string | undefined;
+
+    const resolveCard = async (agent: HarnessContext["agent"]) => {
+      const handle = typeof agent.model === "string" ? agent.model : agent.model.id;
+      const card = await modelCardsService.findByModelId({ tenantId, modelId: handle });
+      if (!card) {
+        throw new Error(
+          `Model "${handle}" has no active Model Card. Configure it in Model Cards before running the agent.`,
+        );
+      }
+      const apiKey = await modelCardsService.getApiKey({ tenantId, cardId: card.id });
+      if (!apiKey) {
+        throw new Error(
+          `Model Card "${handle}" has no decryptable API key. Update the card in Model Cards.`,
+        );
+      }
+      return { handle, card, apiKey };
+    };
+
+    const buildSessionTools = async (agent: HarnessContext["agent"]) => {
+      try {
+        const tools = await buildTools(agent, sandbox, {
+          toMarkdown: toMarkdownProvider,
+          environmentConfig,
+        });
+        logger.info(
+          { op: "main-node.tools.built", count: Object.keys(tools).length },
+          "tools built for harness turn",
+        );
+        return tools;
+      } catch (err) {
+        logger.error({ err, op: "main-node.tools.build_failed" }, "tool construction failed");
+        throw err;
+      }
+    };
+
+    const prepareInstructions = async (agent: HarnessContext["agent"]) => {
+      const reminders = agent.skills?.length
+        ? await resolveCustomSkills(agent.skills, kv, filesBlob, tenantId)
+        : [];
+      if (agent.skills?.length) {
+        const skillFiles = await getSkillFiles(agent.skills, kv, filesBlob, tenantId);
+        for (const skill of skillFiles) {
+          const skillDir = `/home/user/.skills/${skill.skillName}`;
+          await sandbox.exec(`mkdir -p ${skillDir}`, 5_000);
+          for (const file of skill.files) {
+            const path = `${skillDir}/${file.filename}`;
+            if (sandbox.writeFileBytes) {
+              await sandbox.writeFileBytes(path, file.bytes);
+            } else {
+              await sandbox.writeFile(path, new TextDecoder().decode(file.bytes));
+            }
           }
         }
+        logger.info(
+          {
+            op: "main-node.skills.mounted",
+            session_id: sessionId,
+            requested: agent.skills.length,
+            resolved: reminders.length,
+            mounted: skillFiles.length,
+          },
+          "custom skills resolved for harness turn",
+        );
       }
-      logger.info(
-        {
-          op: "main-node.skills.mounted",
-          session_id: input.sessionId,
-          requested: input.agent.skills.length,
-          resolved: reminders.length,
-          mounted: skillFiles.length,
-        },
-        "custom skills resolved for harness turn",
-      );
-    }
-    return {
-      agent: input.agent,
-      userMessage: input.userMessage,
-      session_id: input.sessionId,
-      tools: input.tools as HarnessContext["tools"],
-      model: input.model,
-      systemPrompt: composeSystemPrompt(
+      const rawSystemPrompt = agent.system ?? "";
+      return {
         rawSystemPrompt,
-        reminders.map((skill) => ({
-          source: `skill:${skill.id}`,
-          text: skill.system_prompt_addition,
-        })),
-      ),
-      rawSystemPrompt,
-      env: {
-        environmentConfig: input.environmentConfig,
+        systemPrompt: composeSystemPrompt(
+          rawSystemPrompt,
+          reminders.map((skill) => ({
+            source: `skill:${skill.id}`,
+            text: skill.system_prompt_addition,
+          })),
+        ),
+      };
+    };
+
+    return {
+      prepareTurn: async ({ agent, userMessage }) => {
+        const backend = resolveNodeHarness(agent.harness);
+        if (selected && selected !== backend) {
+          throw new Error(
+            `Session ${sessionId} cannot switch harness from "${selected}" to "${backend}"`,
+          );
+        }
+        selected = backend;
+
+        if (backend === "pi") {
+          if (!piDriver) {
+            const { card, apiKey } = await resolveCard(agent);
+            const { settings, models } = toPiModelCardConfig(card, apiKey);
+            const tools = await buildSessionTools(agent);
+            const { systemPrompt } = await prepareInstructions(agent);
+            const adapted = await createOpenMaHarnessSandbox({ sandbox, sessionId });
+            const agentDir = await mkdtemp(join(tmpdir(), "openma-pi-"));
+            try {
+              await writeFile(join(agentDir, "models.json"), JSON.stringify(models), {
+                mode: 0o600,
+              });
+              const harness = routePiToolsThroughOpenMa(
+                createPi({ ...settings, agentDir }),
+              );
+              const runtime = new NodeHarnessRuntime({
+                sessionId,
+                log: eventLog,
+                hub,
+                sandbox,
+              });
+              await runtime.refreshHistory();
+              piDriver = new AiSdkHarnessDriver({
+                harness,
+                sandbox: adapted.provider,
+                workDir: adapted.workDir,
+                sessionId,
+                runtime,
+                tools,
+                instructions: systemPrompt,
+                modelId: card.model,
+              });
+              piAgentDir = agentDir;
+            } catch (error) {
+              await rm(agentDir, { recursive: true, force: true });
+              throw error;
+            }
+          }
+          return { run: () => piDriver!.run(userMessage) };
+        }
+
+        const { handle, card, apiKey } = await resolveCard(agent);
+        const provider = card.provider;
+        const compat: ApiCompat | undefined =
+          provider === "ant" ||
+          provider === "ant-compatible" ||
+          provider === "oai" ||
+          provider === "oai-compatible"
+            ? provider
+            : undefined;
+        if (!compat) {
+          throw new Error(`Model Card "${handle}" uses unsupported provider "${provider}".`);
+        }
+        const model = resolveModel(
+          card.model,
+          apiKey,
+          card.base_url ?? undefined,
+          compat,
+          card.custom_headers ?? undefined,
+        );
+        const tools = await buildSessionTools(agent);
+        const { rawSystemPrompt, systemPrompt } = await prepareInstructions(agent);
+        const runtime = new NodeHarnessRuntime({ sessionId, log: eventLog, hub, sandbox });
+        await runtime.refreshHistory();
+        const context = {
+          agent,
+          userMessage,
+          session_id: sessionId,
+          tools,
+          model,
+          systemPrompt,
+          rawSystemPrompt,
+          env: { environmentConfig },
+          runtime,
+        } satisfies HarnessContext;
+
+        logger.info(
+          { op: "main-node.model.resolved", model_id: handle, source: "model_card" },
+          "model resolved for harness turn",
+        );
+        return {
+          run: async () => {
+            if (activeAbort) throw new Error("Harness turn is already running");
+            const abort = new AbortController();
+            activeAbort = abort;
+            runtime.abortSignal = abort.signal;
+            try {
+              await new DefaultHarness().run(context);
+              await runtime.flush();
+            } finally {
+              if (activeAbort === abort) activeAbort = undefined;
+            }
+          },
+        };
       },
-      runtime,
-    } satisfies HarnessContext;
+      interrupt: () => {
+        if (piDriver) piDriver.interrupt();
+        else activeAbort?.abort(new Error("Harness turn interrupted"));
+      },
+      close: async () => {
+        activeAbort?.abort(new Error("Harness session closed"));
+        await piDriver?.close();
+        if (piAgentDir) {
+          await rm(piAgentDir, { recursive: true, force: true });
+          piAgentDir = undefined;
+        }
+      },
+    };
   },
 });
 

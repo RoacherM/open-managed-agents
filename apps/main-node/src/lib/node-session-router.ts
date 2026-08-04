@@ -49,9 +49,7 @@ export class NodeSessionRouter implements SessionRouter {
   }
 
   async destroy(sessionId: string): Promise<void> {
-    // Best-effort sandbox teardown via registry. On Node this is a no-op
-    // when the entry isn't realized yet.
-    this.deps.registry.interrupt(sessionId);
+    await this.deps.registry.destroy(sessionId);
     // Hub disposal — drop SSE writers.
     this.deps.hub.closeSession?.(sessionId);
   }
@@ -84,8 +82,17 @@ export class NodeSessionRouter implements SessionRouter {
             row.agent_id,
             event as import("@open-managed-agents/shared").UserMessageEvent,
           )
-          .catch((err) => {
+          .catch(async (err) => {
             moduleLog.error({ err, op: "node_session_router.harness_turn_failed", session_id: sessionId }, "harness turn failed");
+            const errorLog = this.deps.newEventLog(sessionId);
+            await errorLog.appendAsync({
+              type: "session.error",
+              error: "harness_turn_failed",
+              message: err instanceof Error ? err.message : String(err),
+            } as unknown as SessionEvent);
+            const events = await errorLog.getEventsAsync();
+            const last = events[events.length - 1];
+            if (last) this.deps.hub.publish(sessionId, last);
           });
       }
     }

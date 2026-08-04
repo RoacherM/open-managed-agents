@@ -33,22 +33,12 @@ import type {
   SessionEvent,
   UserMessageEvent,
 } from "@open-managed-agents/shared";
-import type { LanguageModel } from "ai";
 import { recoverInterruptedState } from "./recovery";
 import type { OrphanTurn, RuntimeAdapter, TurnId } from "./ports";
 import type { SandboxExecutor } from "@open-managed-agents/sandbox";
 
-/**
- * Pluggable harness — both CF and Node want the same default-loop
- * harness, but the machine doesn't import it directly so we keep the
- * package's dep graph small (no `@open-managed-agents/agent` dep).
- *
- * The shell wires this with:
- *   buildHarness: () => new DefaultHarness()
- *   buildContext: () => HarnessContext  // model + tools + system + ...
- */
-export interface HarnessRunFn {
-  (ctx: unknown): Promise<void>;
+export interface PreparedHarnessTurn {
+  run(): Promise<void>;
 }
 
 export interface SessionMachineDeps {
@@ -78,30 +68,13 @@ export interface SessionMachineDeps {
    *  Optional — sandboxes / hosts that don't support it skip silently. */
   mountSessionOutputs?(opts: { sandbox: SandboxExecutor }): Promise<void>;
 
-  /** Build the LanguageModel for this turn. CF reads env from
-   *  bindings; Node from process.env. */
-  buildModel(agent: AgentConfig): LanguageModel | Promise<LanguageModel>;
-
-  /** Build harness tools. The harness package owns the tool list; the
-   *  machine doesn't know which tools exist, just hands the result to
-   *  the harness. */
-  buildTools(agent: AgentConfig, sandbox: SandboxExecutor): Promise<unknown>;
-
-  /** Build the harness instance + context for one turn. The shell does
-   *  this so the machine doesn't need a hard dep on
-   *  `@open-managed-agents/agent`. The machine just calls run().
-   *
-   *  Async because shells often need to warm up state (e.g. read the
-   *  event log into the harness's history cache) before harness.run
-   *  reads from it. */
-  buildHarness(): { run: (ctx: unknown) => Promise<void> };
-  buildHarnessContext(input: {
+  /** Prepare the selected harness for one turn. Model/tool/context types
+   *  stay in the platform shell so this lifecycle package is backend-neutral. */
+  prepareTurn(input: {
     agent: AgentConfig;
     userMessage: UserMessageEvent;
     sandbox: SandboxExecutor;
-    tools: unknown;
-    model: LanguageModel;
-  }): Promise<unknown>;
+  }): Promise<PreparedHarnessTurn>;
 
   /** Publish a synthetic event to the hub (e.g. session.error,
    *  session.status_idle on recovery). The shell wires this with the
@@ -114,6 +87,8 @@ export interface SessionMachineDeps {
 
 export class SessionStateMachine {
   private activeTurnId: TurnId | null = null;
+  private turnQueue: Promise<void> = Promise.resolve();
+  private destroyed = false;
   private logger: NonNullable<SessionMachineDeps["logger"]>;
 
   constructor(private deps: SessionMachineDeps) {
@@ -137,7 +112,24 @@ export class SessionStateMachine {
    * registry) decides whether to mark session error or just let the
    * status flip back to idle for the user to retry.
    */
-  async runHarnessTurn(
+  runHarnessTurn(
+    agentId: string,
+    userMessage: UserMessageEvent,
+  ): Promise<void> {
+    if (this.destroyed) {
+      return Promise.reject(new Error(`session ${this.deps.sessionId} is destroyed`));
+    }
+    const turn = this.turnQueue.then(() => {
+      if (this.destroyed) {
+        throw new Error(`session ${this.deps.sessionId} is destroyed`);
+      }
+      return this.executeHarnessTurn(agentId, userMessage);
+    });
+    this.turnQueue = turn.catch(() => {});
+    return turn;
+  }
+
+  private async executeHarnessTurn(
     agentId: string,
     userMessage: UserMessageEvent,
   ): Promise<void> {
@@ -165,18 +157,12 @@ export class SessionStateMachine {
         await this.deps.mountSessionOutputs({ sandbox: this.deps.sandbox });
       }
 
-      const tools = await this.deps.buildTools(agent, this.deps.sandbox);
-      const model = await this.deps.buildModel(agent);
-      const ctx = await this.deps.buildHarnessContext({
+      const prepared = await this.deps.prepareTurn({
         agent,
         userMessage,
         sandbox: this.deps.sandbox,
-        tools,
-        model,
       });
-
-      const harness = this.deps.buildHarness();
-      await harness.run(ctx);
+      await prepared.run();
     } finally {
       this.activeTurnId = null;
       await this.deps.adapter.endTurn(this.deps.sessionId, turnId, "idle");
@@ -205,6 +191,7 @@ export class SessionStateMachine {
    * in-flight sandbox + flips status to 'destroyed'.
    */
   async destroy(): Promise<void> {
+    this.destroyed = true;
     const turnId = this.activeTurnId;
     this.activeTurnId = null;
     try {

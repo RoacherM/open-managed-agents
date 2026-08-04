@@ -25,6 +25,7 @@ import { join } from "node:path";
 import {
   RuntimeAdapterImpl,
   SessionStateMachine,
+  type PreparedHarnessTurn,
 } from "@open-managed-agents/session-runtime";
 import type { SqlClient } from "@open-managed-agents/sql-client";
 import { SqlStreamRepo, type SqlEventLog } from "@open-managed-agents/event-log/sql";
@@ -42,11 +43,19 @@ import type {
   SessionEvent,
   UserMessageEvent,
 } from "@open-managed-agents/shared";
-import type { LanguageModel } from "ai";
 import { getLogger } from "@open-managed-agents/observability";
 import type { EventStreamHub } from "./lib/event-stream-hub.js";
 
 const log = getLogger("session-registry");
+
+export type SessionHarnessController = {
+  prepareTurn(input: {
+    agent: AgentConfig;
+    userMessage: UserMessageEvent;
+  }): Promise<PreparedHarnessTurn>;
+  interrupt(): void;
+  close(): Promise<void>;
+};
 
 export interface SessionRegistryDeps {
   sql: SqlClient;
@@ -67,31 +76,14 @@ export interface SessionRegistryDeps {
    *  LocalSubprocess / E2B / Daytona / etc., the machine doesn't. */
   buildSandbox(sessionId: string, workdir: string): Promise<SandboxExecutor>;
 
-  /** Build the LanguageModel for the agent. Reads env, applies custom
-   *  headers, picks the right provider. */
-  buildModel(agent: AgentConfig, tenantId: string): Promise<LanguageModel>;
-
-  /** Build harness tools. Returns the tools dict the harness expects. */
-  buildTools(
-    agent: AgentConfig,
-    sandbox: SandboxExecutor,
-    environmentConfig?: EnvironmentConfig["config"],
-  ): Promise<unknown>;
-
-  /** Build harness instance + context. Each is platform-neutral so the
-   *  machine just calls .run(ctx). */
-  buildHarness(): { run: (ctx: unknown) => Promise<void> };
-  buildHarnessContext(input: {
-    agent: AgentConfig;
-    userMessage: UserMessageEvent;
+  /** Create the stateful harness owner for this OpenMA session. */
+  createHarnessController(input: {
     sandbox: SandboxExecutor;
-    tools: unknown;
-    model: LanguageModel;
     environmentConfig?: EnvironmentConfig["config"];
     tenantId: string;
     sessionId: string;
     eventLog: SqlEventLog;
-  }): Promise<unknown>;
+  }): Promise<SessionHarnessController>;
 
   /** Sandbox workdir root, e.g. /app/data/sandboxes. Per-session dirs
    *  are joined under it. */
@@ -107,6 +99,7 @@ interface SessionEntry {
   machine: SessionStateMachine;
   sandbox: SandboxExecutor;
   eventLog: SqlEventLog;
+  harness: SessionHarnessController;
 }
 
 export class SessionRegistry {
@@ -170,7 +163,11 @@ export class SessionRegistry {
     for (const p of this.map.values()) {
       try {
         const entry = await p;
-        if (entry.sandbox.destroy) await entry.sandbox.destroy();
+        try {
+          await entry.harness.close();
+        } finally {
+          if (entry.sandbox.destroy) await entry.sandbox.destroy();
+        }
       } catch {
         /* best-effort */
       }
@@ -189,18 +186,22 @@ export class SessionRegistry {
     const p = this.map.get(sessionId);
     if (!p) return;
     p.then((entry) => {
-      const m = entry.machine as unknown as {
-        interrupt?: () => void;
-        abortInFlight?: () => void;
-      };
-      if (typeof m.interrupt === "function") m.interrupt();
-      else if (typeof m.abortInFlight === "function") m.abortInFlight();
-      // If the machine doesn't expose either method, the user.interrupt
-      // event is appended to the log by the route handler (P3 wires the
-      // actual abort plumbing into SessionStateMachine).
+      entry.harness.interrupt();
     }).catch(() => {
       /* getOrCreate failed — nothing to abort */
     });
+  }
+
+  async destroy(sessionId: string): Promise<void> {
+    const p = this.map.get(sessionId);
+    if (!p) return;
+    this.map.delete(sessionId);
+    const entry = await p;
+    try {
+      await entry.harness.close();
+    } finally {
+      await entry.machine.destroy();
+    }
   }
 
   // ── helpers ─────────────────────────────────────────────────────────
@@ -243,6 +244,13 @@ export class SessionRegistry {
 
     const eventLog = this.deps.newEventLog(sessionId);
     const streams = new SqlStreamRepo(this.deps.sql, sessionId, this.deps.sqlDialect ?? "sqlite");
+    const harness = await this.deps.createHarnessController({
+      sandbox,
+      environmentConfig,
+      tenantId,
+      sessionId,
+      eventLog,
+    });
 
     const adapter = new RuntimeAdapterImpl({
       sql: this.deps.sql,
@@ -266,20 +274,11 @@ export class SessionRegistry {
       // Node passes no-ops since the work has already been done.
       mountMemoryStores: async () => {},
       mountSessionOutputs: async () => {},
-      buildModel: (agent) => this.deps.buildModel(agent, tenantId),
-      buildTools: (agent, sb) => this.deps.buildTools(agent, sb, environmentConfig),
-      buildHarness: () => this.deps.buildHarness(),
-      buildHarnessContext: (input) =>
-        this.deps.buildHarnessContext({
-          ...input,
-          environmentConfig,
-          tenantId,
-          sessionId,
-          eventLog,
-        }),
+      prepareTurn: ({ agent, userMessage }) =>
+        harness.prepareTurn({ agent, userMessage }),
       publish: (event: SessionEvent) => this.deps.hub.publish(sessionId, event),
     });
 
-    return { machine, sandbox, eventLog };
+    return { machine, sandbox, eventLog, harness };
   }
 }

@@ -18,7 +18,7 @@ export { RuntimeAdapterImpl, type RuntimeAdapterOptions } from "./adapter";
 export {
   SessionStateMachine,
   type SessionMachineDeps,
-  type HarnessRunFn,
+  type PreparedHarnessTurn,
 } from "./machine";
 
 export type {
@@ -33,4 +33,3 @@ export type {
   SessionStreamHandle,
   FileIdResolver,
 } from "./router";
-

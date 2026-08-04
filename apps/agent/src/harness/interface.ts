@@ -142,6 +142,8 @@ export interface HarnessRuntime {
     status: "completed" | "aborted",
   ) => Promise<void>;
   reportUsage?: (input_tokens: number, output_tokens: number) => Promise<void>;
+  /** Wait for any queued event-log writes before the turn is marked idle. */
+  flush?: () => Promise<void>;
   pendingConfirmations?: string[];
   abortSignal?: AbortSignal;
   /**

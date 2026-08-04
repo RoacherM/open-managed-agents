@@ -68,6 +68,7 @@ export class NodeHarnessRuntime implements HarnessRuntime {
   history: SqlHistoryStore;
   sandbox: SandboxExecutor;
   pendingConfirmations?: string[];
+  abortSignal?: AbortSignal;
   /**
    * Per-runtime serial chain for SqlEventLog writes. The harness fires
    * many `broadcast()` calls in close succession (span_start, span_first_
@@ -120,6 +121,10 @@ export class NodeHarnessRuntime implements HarnessRuntime {
         // hit).
       });
   };
+
+  async flush(): Promise<void> {
+    await this.writeChain;
+  }
 
   // Stream lifecycle events: broadcast-only (NOT persisted to events log,
   // matching the CF contract — the eventual agent.message is the canonical
