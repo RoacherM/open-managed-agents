@@ -250,6 +250,23 @@ body,
   }
 }
 
+/* Workspace tab badge bump — fires once each time a panel's unseen count
+   climbs, so a new artifact is noticeable without a persistent animation
+   in the header band. The brand fill only holds through the middle of the
+   keyframe; it settles back to the resting chip colors on its own. */
+@keyframes workspace-badge-bump {
+  0%   { transform: scale(1); }
+  28%  { transform: scale(1.42); background: var(--brand); color: var(--brand-fg); }
+  62%  { transform: scale(1);    background: var(--brand); color: var(--brand-fg); }
+  100% { transform: scale(1); }
+}
+.workspace-badge-bump {
+  animation: workspace-badge-bump 720ms var(--ease-soft);
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-badge-bump { animation: none; }
+}
+
 /* Skeleton placeholder pulse — quieter than animate-pulse (Tailwind's
    default goes opacity 0.5↔1, which reads as "flashing" in long lists).
    This stays subtle: 0.4↔0.65 with the same soft easing as the rest. */

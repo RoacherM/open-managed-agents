@@ -247,17 +247,36 @@ const router = createBrowserRouter([
   },
 ]);
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <Suspense fallback={null}>
-            <RouterProvider router={router} />
-          </Suspense>
-        </AuthProvider>
-        <Toaster />
-      </QueryClientProvider>
-    </ErrorBoundary>
-  </StrictMode>,
-);
+/**
+ * Opt-in dev mocking. `VITE_MSW=1 pnpm dev` boots the console against the
+ * fixtures in src/mocks/dev-handlers instead of the wrangler proxy, which
+ * is how you look at session-scoped UI without standing up a sandbox
+ * container. Dynamically imported behind `import.meta.env.DEV` so neither
+ * msw nor the fixtures reach a production bundle.
+ */
+async function startMocks(): Promise<void> {
+  if (!import.meta.env.DEV || !import.meta.env.VITE_MSW) return;
+  const [{ worker }, { devHandlers }] = await Promise.all([
+    import("./mocks/browser"),
+    import("./mocks/dev-handlers"),
+  ]);
+  worker.use(...devHandlers);
+  await worker.start({ onUnhandledRequest: "bypass" });
+}
+
+void startMocks().then(() => {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <ErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <Suspense fallback={null}>
+              <RouterProvider router={router} />
+            </Suspense>
+          </AuthProvider>
+          <Toaster />
+        </QueryClientProvider>
+      </ErrorBoundary>
+    </StrictMode>,
+  );
+});
