@@ -110,14 +110,18 @@ export function useWorkspaceLayout(
     (event: React.PointerEvent<HTMLElement>) => {
       const area = workAreaRef.current;
       if (!area) return;
-      const divider = event.currentTarget;
       const originX = area.getBoundingClientRect().left;
-      divider.setPointerCapture(event.pointerId);
-      // Seed from the current rendered width so a click without movement
-      // is a no-op rather than a jump to wherever the pointer landed.
+      // Seed from where the pointer went down so a click without movement
+      // is a no-op rather than a jump.
       let raw = event.clientX - originX;
       setDrag({ raw });
 
+      // Listeners go on the window, not the divider. Pointer capture would
+      // be the usual way to keep events flowing once the pointer outruns a
+      // 6px-wide target, but setPointerCapture throws for any pointer id
+      // the UA doesn't consider active — and a throw there would abort the
+      // gesture before the listeners were attached, so the drag silently
+      // did nothing. Window listeners have no such failure mode.
       const onMove = (e: PointerEvent) => {
         // Lower bound of 180 (not CHAT_WIDTH_MIN) so the pointer can reach
         // the snap threshold and preview the collapsed strip.
@@ -125,16 +129,15 @@ export function useWorkspaceLayout(
         setDrag({ raw });
       };
       const onUp = () => {
-        divider.releasePointerCapture(event.pointerId);
-        divider.removeEventListener("pointermove", onMove);
-        divider.removeEventListener("pointerup", onUp);
-        divider.removeEventListener("pointercancel", onUp);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
         setDrag(null);
         dispatch({ type: "commit-drag", rawWidth: raw, viewportWidth: window.innerWidth });
       };
-      divider.addEventListener("pointermove", onMove);
-      divider.addEventListener("pointerup", onUp);
-      divider.addEventListener("pointercancel", onUp);
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
     },
     [workAreaRef],
   );
