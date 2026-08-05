@@ -4625,7 +4625,7 @@ export class SessionDO extends DurableObject<Env> {
           outcomeModelId ||
             ctx.env.ANTHROPIC_MODEL ||
             "claude-sonnet-4-6",
-          ctx.env.ANTHROPIC_API_KEY,
+          this.env.ANTHROPIC_API_KEY,
           ctx.env.ANTHROPIC_BASE_URL,
         );
         try {
