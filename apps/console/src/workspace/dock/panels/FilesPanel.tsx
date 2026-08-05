@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Markdown } from "../../../components/Markdown";
 import { CodeBlock } from "../../../components/ai-elements/code-block";
@@ -52,9 +52,22 @@ export function FilesPanel({ sessionId, displayMode }: PanelProps) {
 
   const stacked = displayMode === "sheet";
 
+  // Picking a file shrinks the tree pane to make room for the preview, which
+  // can leave the row the user just tapped below the fold. Run once on
+  // selection for the desktop pane (no height change, so no transition to
+  // wait for) and again when the sheet's max-height animation lands.
+  const treeScrollRef = useRef<HTMLDivElement | null>(null);
+  const revealSelectedRow = useCallback(() => {
+    treeScrollRef.current
+      ?.querySelector<HTMLElement>("[data-selected]")
+      ?.scrollIntoView({ block: "nearest" });
+  }, []);
+  useEffect(revealSelectedRow, [selected?.path, revealSelectedRow]);
+
   return (
     <div className={`flex-1 min-h-0 flex ${stacked ? "flex-col" : "flex-row"}`}>
       <div
+        onTransitionEnd={revealSelectedRow}
         className={
           stacked
             ? `shrink-0 flex flex-col min-h-0 border-b border-border bg-bg-surface/25 ${selected ? "max-h-45" : "max-h-[52vh]"} transition-[max-height] duration-[var(--dur-slow)] ease-[var(--ease-soft)]`
@@ -72,7 +85,7 @@ export function FilesPanel({ sessionId, displayMode }: PanelProps) {
             ↻
           </button>
         </div>
-        <div className="flex-1 overflow-auto p-1.5 pb-4">
+        <div ref={treeScrollRef} className="flex-1 overflow-auto p-1.5 pb-4">
           {filesError && <div className="px-2 py-1.5 text-xs text-danger">Failed to load: {filesError}</div>}
           {!files && !filesError && <div className="px-2 py-1.5 text-xs text-fg-subtle">Loading…</div>}
           {files && files.length === 0 && (
@@ -197,6 +210,7 @@ function FileRow({
   return (
     <button
       onClick={() => onSelect(node)}
+      data-selected={selected || undefined}
       className={[
         "w-full h-11 sm:h-7 px-2 rounded-md flex items-center gap-1.5 text-left transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]",
         selected

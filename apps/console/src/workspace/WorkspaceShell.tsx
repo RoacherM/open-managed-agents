@@ -150,7 +150,10 @@ export function WorkspaceShell({
                   showMobileChip ? (
                     <button
                       onClick={() => layout.openPanel("files")}
-                      className="absolute left-1/2 bottom-full mb-2.5 -translate-x-1/2 z-10 inline-flex items-center gap-1.5 h-8.5 px-3.5 rounded-full whitespace-nowrap bg-brand-subtle text-brand-hover border border-brand text-[12.5px] font-medium shadow-lg"
+                      // h-11: the chip only ever renders on touch layouts,
+                      // so it carries the 44px target floor like the rest
+                      // of the sheet controls.
+                      className="absolute left-1/2 bottom-full mb-2.5 -translate-x-1/2 z-10 inline-flex items-center gap-1.5 h-11 px-4 rounded-full whitespace-nowrap bg-brand-subtle text-brand-hover border border-brand text-[12.5px] font-medium shadow-lg"
                     >
                       <BoltIcon className="size-3" />
                       Files 有新内容 · 查看

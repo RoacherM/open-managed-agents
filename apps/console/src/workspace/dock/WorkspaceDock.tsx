@@ -84,26 +84,35 @@ function MobileSheet({
 }) {
   const [dragY, setDragY] = useState(0);
   const dragging = useRef(false);
-  const startY = useRef(0);
 
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  // Window listeners rather than handlers on the handle itself: a dismissal
+  // pull travels far past a 22px grab target, and once the finger leaves it
+  // React's synthetic events go to whatever is underneath instead. Pointer
+  // capture is the usual answer but setPointerCapture throws for any pointer
+  // id the UA doesn't treat as active, which silently kills the gesture.
+  const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     dragging.current = true;
-    startY.current = e.clientY;
+    const startY = event.clientY;
+    let dy = 0;
     setDragY(0);
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragging.current) return;
-    setDragY(Math.max(0, e.clientY - startY.current));
-  };
-  const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragging.current) return;
-    dragging.current = false;
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    // Past ~90px of pull the gesture reads as a dismissal rather than a
-    // mis-grab, matching the platform sheet convention.
-    if (dragY > 90) onClose();
-    setDragY(0);
+
+    const onMove = (e: PointerEvent) => {
+      dy = Math.max(0, e.clientY - startY);
+      setDragY(dy);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      dragging.current = false;
+      // Past ~90px of pull the gesture reads as a dismissal rather than a
+      // mis-grab, matching the platform sheet convention.
+      if (dy > 90) onClose();
+      setDragY(0);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   };
 
   return (
@@ -120,10 +129,7 @@ function MobileSheet({
         <div
           role="button"
           aria-label="Drag down to dismiss"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
+          onPointerDown={startDrag}
           className="h-5.5 flex items-center justify-center touch-none cursor-grab active:cursor-grabbing"
         >
           <span className="w-9.5 h-1 rounded-full bg-border-strong" />
