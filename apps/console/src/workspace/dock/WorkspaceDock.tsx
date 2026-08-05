@@ -49,7 +49,10 @@ export function WorkspaceDock({
   return (
     <section
       aria-label="Workspace"
-      className="flex-1 min-w-0 flex flex-col bg-bg overflow-hidden"
+      // Solo has to give the width back, not just hide the panel: left at
+      // flex-1 the empty dock keeps taking a share of the row and pushes
+      // the conversation's reading measure off-centre.
+      className={`min-w-0 flex flex-col bg-bg overflow-hidden ${open ? "flex-1" : "flex-none basis-0"}`}
     >
       <div
         className={`flex-1 min-h-0 flex flex-col transition-[opacity,transform] duration-[var(--dur-slow)] ease-[var(--ease-soft)] ${
