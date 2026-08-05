@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, Navigate, useLocation, useNavigate } from "react-router";
 
 import {
@@ -78,6 +78,22 @@ export function AppShell() {
   const navigate = useNavigate();
   const [pageHeaderSlot, setPageHeaderSlot] = useState<HTMLDivElement | null>(null);
 
+  // Session workspace mode. `/sessions/:id` renders its own full-height
+  // shell (header band + conversation + panel dock), so the frame gets out
+  // of its way: the sidebar collapses to the 52px icon rail, the breadcrumb
+  // toolbar is dropped (the workspace header carries the trail), and the
+  // panel loses its rounded corner and its scroll container — every scroll
+  // inside a session belongs to the conversation or a panel, never the
+  // page. Every other route is untouched.
+  const isSessionWorkspace = /^\/sessions\/[^/]+\/?$/.test(pathname);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  useEffect(() => {
+    // Collapse on entry, restore on exit. The operator can still expand the
+    // rail from the workspace header's trigger while inside a session;
+    // leaving puts the full nav back.
+    setSidebarOpen(!isSessionWorkspace);
+  }, [isSessionWorkspace]);
+
   // Linear-style chord bindings.
   const chordBindings = useMemo<ChordBinding[]>(
     () =>
@@ -121,6 +137,8 @@ export function AppShell() {
   return (
     <TooltipProvider delayDuration={250}>
       <SidebarProvider
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
         className="h-svh overflow-hidden"
         style={{
           // 224px expanded, 52px collapsed-icon — matches benchmark.
@@ -160,12 +178,18 @@ export function AppShell() {
           <AppSidebar />
 
           <div className="flex-1 min-w-0 flex flex-col min-h-0">
-            <header className="h-11 flex items-center gap-1.5 pl-2 pr-4 bg-sidebar shrink-0">
-              <SidebarTrigger className="h-6 w-6 text-fg-muted hover:text-fg hover:bg-sidebar-accent" />
-              <AppBreadcrumb />
-            </header>
+            {!isSessionWorkspace && (
+              <header className="h-11 flex items-center gap-1.5 pl-2 pr-4 bg-sidebar shrink-0">
+                <SidebarTrigger className="h-6 w-6 text-fg-muted hover:text-fg hover:bg-sidebar-accent" />
+                <AppBreadcrumb />
+              </header>
+            )}
 
-            <div className="flex-1 min-h-0 rounded-tl-lg bg-bg flex flex-col overflow-hidden">
+            <div
+              className={`flex-1 min-h-0 bg-bg flex flex-col overflow-hidden ${
+                isSessionWorkspace ? "" : "rounded-tl-lg"
+              }`}
+            >
               <div
                 ref={setPageHeaderSlot}
                 className={[
@@ -186,7 +210,9 @@ export function AppShell() {
                   // Cleanup handled when ref unmounts (el = null branch above).
                 }}
                 key={pathname}
-                className="flex-1 min-h-0 overflow-y-auto bg-bg [scrollbar-gutter:stable] [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
+                className={`flex-1 min-h-0 bg-bg [scrollbar-gutter:stable] [&::-webkit-scrollbar]:hidden [scrollbar-width:none] ${
+                  isSessionWorkspace ? "overflow-hidden" : "overflow-y-auto"
+                }`}
               >
                 <Outlet context={outletContext} />
               </main>
