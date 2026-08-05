@@ -1205,12 +1205,22 @@ export function buildSessionRoutes(deps: SessionRoutesDeps) {
     return c.json({ data: data ?? [], has_more: false });
   });
 
-  app.get("/:id/outputs/:filename", async (c) => {
+  // `{.+}` so nested artifacts resolve — the listing returns paths relative
+  // to /mnt/session/outputs/ (R2 keys and the Node recursive walk both carry
+  // separators), and a bare `:filename` would only ever match the top level.
+  // Traversal is still rejected: `..` and backslashes are refused outright
+  // and the adapters resolve strictly under the session's own prefix.
+  app.get("/:id/outputs/:filename{.+}", async (c) => {
     if (!deps.outputs) return c.json({ error: "outputs not configured" }, 404);
     const services = resolveServices(deps.services, c);
     const id = c.req.param("id");
     const filename = c.req.param("filename");
-    if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) {
+    if (
+      filename.includes("..")
+      || filename.includes("\\")
+      || filename.startsWith("/")
+      || filename.split("/").some((seg) => seg === "")
+    ) {
       return c.json({ error: "Invalid filename" }, 400);
     }
     const sess = await services.sessions.get({
@@ -1220,11 +1230,14 @@ export function buildSessionRoutes(deps: SessionRoutesDeps) {
     if (!sess) return c.json({ error: "Session not found" }, 404);
     const obj = await deps.outputs.read(c.var.tenant_id, id, filename);
     if (!obj) return c.json({ error: "Output file not found" }, 404);
+    // Basename only — a Content-Disposition filename carrying directory
+    // separators is ignored (or sanitized differently) by every browser.
+    const basename = filename.slice(filename.lastIndexOf("/") + 1);
     return new Response(obj.body, {
       headers: {
         "Content-Type": obj.contentType,
         "Content-Length": String(obj.size),
-        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Disposition": `attachment; filename="${basename}"`,
       },
     });
   });

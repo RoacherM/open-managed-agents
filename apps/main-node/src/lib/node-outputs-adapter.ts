@@ -6,17 +6,22 @@
 
 import { createReadStream } from "node:fs";
 import { stat as fsStat, readdir as fsReaddir, rm as fsRm } from "node:fs/promises";
-import { join, resolve as resolvePath } from "node:path";
+import { join, resolve as resolvePath, sep } from "node:path";
 import { Readable } from "node:stream";
 import { guessSessionOutputMime } from "@open-managed-agents/shared";
 
 export function nodeOutputsAdapter(outputsRoot: string) {
   return {
+    // Walks subdirectories: the agent writes structured output trees
+    // (shots/, storyboards/, …) and the console renders them as a tree, so
+    // a top-level-only listing hid most of what a session produced. Paths
+    // are returned relative to the session root with `/` separators, which
+    // is the same shape the R2 adapter yields.
     async list(tenantId: string, sessionId: string) {
       const dir = resolvePath(outputsRoot, tenantId, sessionId);
       let entries: string[];
       try {
-        entries = await fsReaddir(dir);
+        entries = await fsReaddir(dir, { recursive: true });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
         throw err;
@@ -27,10 +32,11 @@ export function nodeOutputsAdapter(outputsRoot: string) {
         uploaded_at: string;
         media_type: string;
       }> = [];
-      for (const filename of entries) {
+      for (const entry of entries) {
         try {
-          const st = await fsStat(join(dir, filename));
+          const st = await fsStat(join(dir, entry));
           if (!st.isFile()) continue;
+          const filename = entry.split(sep).join("/");
           out.push({
             filename,
             size_bytes: st.size,
@@ -44,7 +50,13 @@ export function nodeOutputsAdapter(outputsRoot: string) {
       return out;
     },
     async read(tenantId: string, sessionId: string, filename: string) {
-      const full = join(resolvePath(outputsRoot, tenantId, sessionId), filename);
+      const sessionDir = resolvePath(outputsRoot, tenantId, sessionId);
+      const full = resolvePath(sessionDir, filename);
+      // Defence in depth against traversal. The route already rejects `..`
+      // and absolute paths, but this adapter is a public export and the
+      // tenant/session prefix is the whole isolation boundary — a symlink
+      // or an odd encoding must not be able to escape it.
+      if (full !== sessionDir && !full.startsWith(sessionDir + sep)) return null;
       let st;
       try {
         st = await fsStat(full);
