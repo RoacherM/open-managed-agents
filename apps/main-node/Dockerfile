@@ -99,6 +99,7 @@ ENV PORT=8787
 ENV HOST=0.0.0.0
 ENV DATABASE_PATH=/app/data/oma.db
 ENV SANDBOX_WORKDIR=/app/data/sandboxes
+ENV SESSION_OUTPUTS_DIR=/app/data/session-outputs
 # Console SPA is at /app/apps/console/dist (built in the deps stage).
 # main-node's serveStatic middleware mounts it at "/*" with index.html
 # fallback. Unset CONSOLE_DIR (or build with --build-arg SKIP_CONSOLE=1)
