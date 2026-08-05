@@ -4,6 +4,13 @@ import { useApi } from "../lib/api";
 import type { Event } from "../lib/events";
 import type { SessionOutputFile } from "./dock/panels/file-tree";
 import type { WorkspaceSignals } from "./dock/registry";
+import {
+  acknowledgeFiles,
+  foldListing,
+  initialFileSignalState,
+  resetFileSignals,
+  type FileSignalState,
+} from "./file-signals";
 
 /**
  * Artifact signals for the workspace dock.
@@ -18,6 +25,9 @@ import type { WorkspaceSignals } from "./dock/registry";
  *
  * The diff drives three things: the Files tab badge, the amber flash on
  * fresh tree rows, and the auto-reveal decision in WorkspaceShell.
+ *
+ * This hook owns the fetching and the triggers; the diff itself and the
+ * ordering rules for concurrent listings live in ./file-signals.
  */
 
 /** Event types that mean "a tool just finished, artifacts may exist now". */
@@ -48,43 +58,35 @@ export function useWorkspaceSignals(
   events: Event[],
 ): WorkspaceSignalsApi {
   const { api } = useApi();
-  const [files, setFiles] = useState<SessionOutputFile[] | null>(null);
+  const [state, setState] = useState<FileSignalState>(initialFileSignalState);
   const [filesError, setFilesError] = useState<string | null>(null);
-  const [unseenFiles, setUnseenFiles] = useState(0);
-  const [freshFilePaths, setFreshFilePaths] = useState<ReadonlySet<string>>(new Set());
-  const knownPaths = useRef<Set<string> | null>(null);
+  // Monotonic ticket handed to each request. Responses fold in under their
+  // own ticket so a slow one can't clobber a listing issued after it.
+  const issued = useRef(0);
 
   const refreshFiles = useCallback(() => {
     if (!sessionId) return;
+    const generation = ++issued.current;
     api<{ data: SessionOutputFile[]; has_more: boolean }>(`/v1/sessions/${sessionId}/outputs`)
       .then((res) => {
-        const next = res.data ?? [];
-        setFiles(next);
-        setFilesError(null);
-
-        const paths = new Set(next.map((f) => f.filename));
-        const previous = knownPaths.current;
-        knownPaths.current = paths;
-        // The first listing establishes the baseline — everything already
-        // in the sandbox when the operator opened the page is "existing",
-        // not "just produced", so it must not badge.
-        if (previous === null) return;
-        const added = [...paths].filter((p) => !previous.has(p));
-        if (added.length === 0) return;
-        setUnseenFiles((n) => n + added.length);
-        setFreshFilePaths((prev) => new Set([...prev, ...added]));
+        setState((prev) => foldListing(prev, generation, res.data ?? []));
+        if (generation === issued.current) setFilesError(null);
       })
-      .catch((e) => setFilesError(e instanceof Error ? e.message : String(e)));
+      .catch((e) => {
+        // Only the newest request may report failure — a stale rejection
+        // would show an error over a listing that actually loaded.
+        if (generation !== issued.current) return;
+        setFilesError(e instanceof Error ? e.message : String(e));
+      });
   }, [api, sessionId]);
 
   // Reset everything when the route switches sessions — same component
-  // instance serves /sessions/A and /sessions/B.
+  // instance serves /sessions/A and /sessions/B. Re-baselining above every
+  // ticket in flight is what stops session A's pending listing from landing
+  // in session B and badging its files as new.
   useEffect(() => {
-    knownPaths.current = null;
-    setFiles(null);
+    setState(resetFileSignals(++issued.current));
     setFilesError(null);
-    setUnseenFiles(0);
-    setFreshFilePaths(new Set());
     refreshFiles();
   }, [refreshFiles]);
 
@@ -112,17 +114,23 @@ export function useWorkspaceSignals(
 
   const acknowledge = useCallback((panelId: string) => {
     if (panelId !== "files") return;
-    setUnseenFiles(0);
-    setFreshFilePaths(new Set());
+    setState(acknowledgeFiles);
   }, []);
 
   const signals = useMemo<WorkspaceSignals>(
     () => ({
-      unseen: { files: unseenFiles },
-      totals: { files: files?.length ?? 0 },
+      unseen: { files: state.unseen },
+      totals: { files: state.files?.length ?? 0 },
     }),
-    [files, unseenFiles],
+    [state.files, state.unseen],
   );
 
-  return { signals, files, filesError, refreshFiles, freshFilePaths, acknowledge };
+  return {
+    signals,
+    files: state.files,
+    filesError,
+    refreshFiles,
+    freshFilePaths: state.fresh,
+    acknowledge,
+  };
 }
