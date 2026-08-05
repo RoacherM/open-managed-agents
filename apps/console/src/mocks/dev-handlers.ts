@@ -108,6 +108,9 @@ const OUTPUTS = [
   { filename: "storyboards/sh001-sb.png", size_bytes: 22040, media_type: "image/png" },
   { filename: "storyboards/sh005-sb.png", size_bytes: 23110, media_type: "image/png" },
   { filename: "audio/narration-v1.wav", size_bytes: 96044, media_type: "audio/wav" },
+  // Over the preview ceiling on purpose — the kind of build log an agent
+  // leaves behind, and the case that used to hang the tab.
+  { filename: "render.log", size_bytes: 3_200_000, media_type: "text/plain" },
 ].map((f) => ({ ...f, uploaded_at: "2026-08-05T08:00:00.000Z" }));
 
 /** File the simulated agent writes ~6s after the SSE stream opens. */

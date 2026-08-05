@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
+import { getActiveTenantId, readApiError } from "../../../lib/api";
 import { Markdown } from "../../../components/Markdown";
 import { CodeBlock } from "../../../components/ai-elements/code-block";
 import { useWorkspaceData } from "../../context";
@@ -270,15 +272,14 @@ function PreviewPane({ sessionId, file }: { sessionId: string; file: FileNode | 
         <span className="font-mono text-[10.5px] text-fg-subtle shrink-0">
           {formatBytes(file.size)}
         </span>
-        <a
-          href={url}
-          download={file.name}
+        <button
+          onClick={() => void downloadOutput(url, file.name)}
           className="ml-auto shrink-0 grid place-items-center size-11 sm:size-6.5 rounded-md text-fg-subtle hover:text-fg hover:bg-bg-surface transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]"
           title="Download"
           aria-label={`Download ${file.name}`}
         >
           <DownloadIcon className="size-3.5" />
-        </a>
+        </button>
       </div>
       {/* Keyed on the path so switching files tears down the previous
           media element instead of letting a <video> keep its old buffer. */}
@@ -287,38 +288,124 @@ function PreviewPane({ sessionId, file }: { sessionId: string; file: FileNode | 
   );
 }
 
+/** Ceiling for reading a text artifact into memory. Agents write build logs
+ *  and dataset dumps here; buffering one of those into a string and handing
+ *  it to a syntax highlighter locks the tab up for seconds. */
+const TEXT_PREVIEW_LIMIT = 512 * 1024;
+
+/**
+ * Raw fetch for a session output, carrying the workspace pin.
+ *
+ * `api()` can't be used — it always parses JSON — and a bare URL on
+ * `<img>` / `<video>` / `<a download>` can't send headers at all, so on a
+ * non-default tenant the listing loads and every preview 404s. Same shape
+ * as the download path in pages/FilesList.tsx.
+ */
+function fetchOutput(url: string): Promise<Response> {
+  const activeTenant = getActiveTenantId();
+  return fetch(url, {
+    credentials: "include",
+    headers: activeTenant ? { "x-active-tenant": activeTenant } : {},
+  });
+}
+
+async function downloadOutput(url: string, filename: string): Promise<void> {
+  try {
+    const res = await fetchOutput(url);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      toast.error(`Download failed: ${readApiError(body, res.status).message}`);
+      return;
+    }
+    const objectUrl = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(objectUrl);
+  } catch (e) {
+    toast.error(`Download failed: ${e instanceof Error ? e.message : "network error"}`);
+  }
+}
+
 function FilePreview({ file, url }: { file: FileNode; url: string }) {
   const kind = previewKindFor(file);
+  const textual = isTextualPreview(kind);
+  const truncated = textual && file.size > TEXT_PREVIEW_LIMIT;
+  // Media has to become a blob URL to survive the tenant header; `binary`
+  // has nothing to render, so it never pulls the bytes down at all.
+  const needsBlob = kind === "image" || kind === "video" || kind === "audio";
+
   const [text, setText] = useState<string | null>(null);
-  const [textError, setTextError] = useState<string | null>(null);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isTextualPreview(kind)) return;
+    if (truncated || (!textual && !needsBlob)) return;
     let cancelled = false;
+    let objectUrl: string | null = null;
     setText(null);
-    setTextError(null);
-    fetch(url, { credentials: "include" })
-      .then((res) => {
+    setBlobUrl(null);
+    setError(null);
+
+    fetchOutput(url)
+      .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.text();
-      })
-      .then((body) => {
-        if (!cancelled) setText(body);
+        if (textual) {
+          const body = await res.text();
+          if (!cancelled) setText(body);
+          return;
+        }
+        objectUrl = URL.createObjectURL(await res.blob());
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setBlobUrl(objectUrl);
       })
       .catch((e) => {
-        if (!cancelled) setTextError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       });
+
     return () => {
       cancelled = true;
+      // FilePreview is keyed on the path, so switching files unmounts this
+      // instance and releases the bytes with it.
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [kind, url]);
+  }, [textual, needsBlob, truncated, url]);
+
+  const downloadLink = (label: string) => (
+    <button
+      onClick={() => void downloadOutput(url, file.name)}
+      className="text-info hover:underline"
+    >
+      {label}
+    </button>
+  );
 
   const body = () => {
+    if (error) return <PreviewError message={error} />;
+    if (truncated) {
+      return (
+        <div className="text-sm text-fg-muted leading-relaxed">
+          <div>
+            Too large to preview ({formatBytes(file.size)} — limit{" "}
+            {formatBytes(TEXT_PREVIEW_LIMIT)}).
+          </div>
+          {downloadLink(`Download ${file.name}`)}
+        </div>
+      );
+    }
+    if ((textual && text === null) || (needsBlob && blobUrl === null)) {
+      return <div className="text-xs text-fg-subtle">Loading…</div>;
+    }
+
     switch (kind) {
       case "image":
         return (
           <img
-            src={url}
+            src={blobUrl!}
             alt={file.name}
             className="max-w-190 w-full rounded-xl border border-border bg-bg-surface"
           />
@@ -326,40 +413,33 @@ function FilePreview({ file, url }: { file: FileNode; url: string }) {
       case "video":
         return (
           <video
-            src={url}
+            src={blobUrl!}
             controls
-            preload="metadata"
             className="max-w-190 w-full rounded-xl border border-border bg-black"
           />
         );
       case "audio":
         return (
           <div className="max-w-190 w-full rounded-xl border border-border bg-bg-surface p-4">
-            <audio src={url} controls preload="metadata" className="w-full" />
+            <audio src={blobUrl!} controls className="w-full" />
           </div>
         );
       case "markdown":
-        if (textError) return <PreviewError message={textError} />;
-        if (text === null) return <div className="text-xs text-fg-subtle">Loading…</div>;
         return (
           <div className="max-w-[70ch]">
-            <Markdown>{text}</Markdown>
+            <Markdown>{text!}</Markdown>
           </div>
         );
       case "json":
-        if (textError) return <PreviewError message={textError} />;
-        if (text === null) return <div className="text-xs text-fg-subtle">Loading…</div>;
         return (
           <div className="max-w-190 rounded-xl overflow-hidden">
-            <CodeBlock code={text} language="json" />
+            <CodeBlock code={text!} language="json" />
           </div>
         );
       case "text":
         // Deliberately not routed through CodeBlock: Shiki's bundled
         // language union has no plaintext grammar, and picking an
         // arbitrary one would colour a log file as if it were source.
-        if (textError) return <PreviewError message={textError} />;
-        if (text === null) return <div className="text-xs text-fg-subtle">Loading…</div>;
         return (
           <pre className="max-w-190 rounded-xl bg-bg-surface border border-border px-4 py-3 font-mono text-[11.5px] leading-relaxed text-fg-muted whitespace-pre-wrap break-words">
             {text}
@@ -369,9 +449,7 @@ function FilePreview({ file, url }: { file: FileNode; url: string }) {
         return (
           <div className="text-sm text-fg-muted leading-relaxed">
             <div>No inline preview for {file.mediaType || "this file type"}.</div>
-            <a href={url} download={file.name} className="text-info hover:underline">
-              Download {file.name}
-            </a>
+            {downloadLink(`Download ${file.name}`)}
           </div>
         );
     }
