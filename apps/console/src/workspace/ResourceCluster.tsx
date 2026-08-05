@@ -41,10 +41,17 @@ export function ResourceCluster({ resources }: { resources: SessionResources }) 
 
   return (
     <Popover>
-      <PopoverTrigger className="hidden lg:inline-flex items-center gap-1.5 min-w-0 max-w-full h-6 px-2 rounded-md border border-border text-[11.5px] text-fg-subtle hover:bg-bg-surface hover:border-border-strong hover:text-fg-muted data-[state=open]:bg-bg-surface data-[state=open]:border-border-strong transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]">
-        <AgentIcon className="size-3 shrink-0" />
-        <span className="truncate">{summary}</span>
-        <svg viewBox="0 0 24 24" className="size-3 shrink-0 fill-none stroke-current" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      {/* Below lg the summary text is the first thing that has to go, but
+          the popover is the only route to the agent / environment / vault
+          this session is bound to — so the trigger stays as an icon button
+          rather than dropping out of the header entirely. */}
+      <PopoverTrigger
+        aria-label="Session resources"
+        className="inline-flex items-center justify-center shrink-0 size-11 sm:size-6.5 lg:h-6 lg:w-auto lg:min-w-0 lg:max-w-full lg:justify-start lg:gap-1.5 lg:px-2 rounded-md border border-transparent lg:border-border text-[11.5px] text-fg-subtle hover:bg-bg-surface hover:border-border-strong hover:text-fg-muted data-[state=open]:bg-bg-surface data-[state=open]:border-border-strong transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]"
+      >
+        <AgentIcon className="size-4 lg:size-3 shrink-0" />
+        <span className="hidden lg:block truncate">{summary}</span>
+        <svg viewBox="0 0 24 24" className="hidden lg:block size-3 shrink-0 fill-none stroke-current" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="m6 9 6 6 6-6" />
         </svg>
       </PopoverTrigger>

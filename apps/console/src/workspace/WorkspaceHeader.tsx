@@ -62,7 +62,7 @@ export function WorkspaceHeader({
           </IconButton>
         )}
 
-        <nav className="flex items-center gap-1.5 min-w-0 shrink-0 text-[13px]">
+        <nav className="flex items-center gap-1.5 min-w-0 text-[13px]">
           <Link
             to="/sessions"
             className="hidden sm:inline text-fg-subtle hover:text-fg-muted transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)]"

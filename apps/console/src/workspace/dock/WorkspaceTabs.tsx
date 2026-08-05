@@ -112,7 +112,7 @@ function TabButton({
       className={
         variant === "underline"
           ? `relative h-full px-2.5 inline-flex items-center gap-1.5 text-[13px] transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] ${active ? "text-fg" : "text-fg-subtle hover:text-fg-muted"}`
-          : `h-10 shrink-0 px-3.5 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap text-[13px] border transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] ${
+          : `h-11 shrink-0 px-3.5 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap text-[13px] border transition-colors duration-[var(--dur-quick)] ease-[var(--ease-soft)] ${
               active
                 ? "bg-brand-subtle border-brand/40 text-fg"
                 : "bg-bg-surface border-border text-fg-subtle"
