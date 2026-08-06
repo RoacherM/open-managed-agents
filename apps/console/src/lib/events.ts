@@ -34,6 +34,43 @@ export interface Event {
   [key: string]: unknown;
 }
 
+/**
+ * Dedup key for SSE re-delivery + initial-fetch overlap.
+ *
+ * Preference order:
+ * 1. `id` — the CF runtime stamps sevt-* / toolCallId ids on every event.
+ * 2. `session_thread_id:seq` — the Node runtime stamps ids on almost
+ *    nothing (only tool_use / model_request_start / custom_tool_use), but
+ *    every event it persists or broadcasts carries the per-session
+ *    monotonic `seq`. Without this tier the content fallback swallowed
+ *    real events wholesale: agent.thinking keeps its text in `text` (not
+ *    `content`), so every thinking event keyed to `agent.thinking:""` and
+ *    a session with 189 thinking blocks rendered exactly one
+ *    (sess-1wo4h2scx1ht3ttl, 2026-08-06). Byte-identical tool_results and
+ *    repeated session.errors were dropped the same way.
+ * 3. Content hash — legacy events from before either stamping scheme.
+ *
+ * A Node-runtime edge: the seq broadcast over SSE is tentative and can in
+ * rare recovery races differ from the persisted seq. That direction of
+ * error duplicates a render instead of dropping one — acceptable.
+ */
+export function eventKey(e: Event): string {
+  const id = (e as { id?: string }).id;
+  if (id) return id;
+  const seq = (e as { seq?: number }).seq;
+  if (typeof seq === "number") {
+    return `${(e as { session_thread_id?: string }).session_thread_id ?? "sthr_primary"}:${seq}`;
+  }
+  const body =
+    e.content ||
+    (e as { text?: string }).text ||
+    e.tool_use_id ||
+    (e as { message_id?: string }).message_id ||
+    e.error ||
+    "";
+  return `${e.type}:${JSON.stringify(body).slice(0, 120)}`;
+}
+
 /** Normalize every event timestamp shape used by the two runtimes. */
 export function eventTimestampMs(event: Event): number | null {
   const processedAt =

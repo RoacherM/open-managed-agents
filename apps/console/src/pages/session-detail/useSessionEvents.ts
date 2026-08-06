@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useApi } from "../../lib/api";
-import type { Event } from "../../lib/events";
+import { eventKey, type Event } from "../../lib/events";
 import type { Trajectory } from "../../lib/trajectory";
 
 /**
@@ -130,18 +130,6 @@ export function useSessionEvents(id: string | undefined): SessionEventsState {
     setThreads([]);
     setPendingByEventId(new Map());
     setLocalPending(null);
-
-    // Dedup key for SSE re-delivery + initial-fetch overlap. `id` is
-    // stamped on every event by the server (sevt-* for tool_results /
-    // stream events; toolCallId for tool_use overrides) so it's a
-    // uniqueness guarantee across the wire. The previous content-based
-    // key dropped legitimate distinct events whose payloads happened to
-    // be byte-identical (two back-to-back `gh repo list` calls both
-    // timing out with the same 401 stderr was the repro). The fallback
-    // only kicks in for legacy events that pre-date stamping.
-    const eventKey = (e: Event) =>
-      (e as { id?: string }).id
-      ?? `${e.type}:${JSON.stringify(e.content || e.tool_use_id || e.error || "").slice(0, 120)}`;
 
     const addEvent = (raw: Record<string, unknown>) => {
       const ev = raw as Event;
