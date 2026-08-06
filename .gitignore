@@ -47,3 +47,4 @@ rl/tasks/terminal-bench/findings-*.md
 .pnpm-store/
 data/
 .env
+.agents/
