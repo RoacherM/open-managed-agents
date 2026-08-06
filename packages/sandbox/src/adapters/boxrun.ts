@@ -175,6 +175,11 @@ export class BoxRunSandbox implements SandboxExecutor {
     const dir = slash >= 0 ? path.slice(0, slash) : "/";
     const name = slash >= 0 ? path.slice(slash + 1) : path;
     const tar = packSingleFileTar(name, bytes);
+    // The PUT /files tar upload is not documented to create missing parent
+    // dirs; the write contract (ports.ts) requires it.
+    if (dir !== "/" && dir !== "") {
+      await this.exec(`mkdir -p '${dir.replace(/'/g, `'\\''`)}'`, 10);
+    }
     const res = await this.fetch(
       `/boxes/${boxId}/files?path=${encodeURIComponent(dir)}&overwrite=true`,
       {
