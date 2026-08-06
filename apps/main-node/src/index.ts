@@ -1057,8 +1057,7 @@ v1.route("/api_keys", buildApiKeyRoutes({ storage: apiKeyStorage }));
 v1.route("/evals", buildEvalRoutes({
   evals: evalsService,
   agents: agentsService,
-  // Node has no per-tenant cloud environments yet — leave the optional
-  // dep undefined so the route accepts any environment_id without 404ing.
+  environments: environmentsService,
 }));
 
 v1.route("/environments", environmentsRoutes);
