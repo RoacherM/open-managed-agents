@@ -246,6 +246,7 @@ export class LiteBoxSandbox implements SandboxExecutor {
     const target = this.normalise(path);
     await fs.writeFile(tmp, content, "utf8");
     try {
+      await this.ensureParentDir(target);
       await box.copyIn(tmp, target);
     } finally {
       await fs.rm(tmp, { force: true }).catch(() => {});
@@ -259,11 +260,25 @@ export class LiteBoxSandbox implements SandboxExecutor {
     const target = this.normalise(path);
     await fs.writeFile(tmp, bytes);
     try {
+      await this.ensureParentDir(target);
       await box.copyIn(tmp, target);
     } finally {
       await fs.rm(tmp, { force: true }).catch(() => {});
     }
     return target;
+  }
+
+  /** copyIn does not create missing parent directories; the write contract
+   *  (ports.ts) says writes do. Callers used to compensate with their own
+   *  bash `mkdir -p` — which on LocalSubprocessSandbox escaped the jail and
+   *  littered the real host /home/user with empty dirs. */
+  private async ensureParentDir(target: string): Promise<void> {
+    const dir = dirname(target);
+    if (dir === "/" || dir === ".") return;
+    const box = await this.ensureBox();
+    await box.exec("sh", ["-c", `mkdir -p '${dir.replace(/'/g, `'\\''`)}'`], {}, {
+      timeoutSecs: 10,
+    });
   }
 
   async destroy(): Promise<void> {

@@ -63,10 +63,14 @@ export interface SandboxExecutor {
   /** Read raw bytes — required for binary-safe `POST /v1/sessions/:id/files`
    *  promotion. Optional so adapters that only see text can omit it. */
   readFileBytes?(path: string): Promise<Uint8Array>;
+  /** Write text. Missing parent directories are created — callers must NOT
+   *  compensate with bash `mkdir -p`, which bypasses path-virtualizing
+   *  adapters (LocalSubprocessSandbox jail) and touches the real host fs. */
   writeFile(path: string, content: string): Promise<string>;
   /**
    * Write raw bytes. Use this for binary files (PDFs, images, archives) —
    * the string-based writeFile would corrupt them via UTF-8 round-tripping.
+   * Same parent-directory contract as writeFile.
    */
   writeFileBytes?(path: string, bytes: Uint8Array): Promise<string>;
   /**

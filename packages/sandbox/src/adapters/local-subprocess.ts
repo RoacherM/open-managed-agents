@@ -453,7 +453,10 @@ export class LocalSubprocessSandbox implements SandboxExecutor {
       // same directory. With the host HOME inherited instead, `ls
       // ~/.skills` showed an empty (or another user's) home while the
       // file tools saw the materialized skills — the agent concluded no
-      // skills were installed (sess-1wo4h2scx1ht3ttl, 2026-08-06).
+      // skills were installed (sess-1wo4h2scx1ht3ttl, 2026-08-06). Placed
+      // after envVars deliberately: the jail alignment is a structural
+      // invariant of this adapter, so an env resource named HOME must not
+      // repoint ~ outside the session workdir.
       HOME: join(this.workdir, "home", "user"),
     };
     for (const { prefix, secrets } of this.commandSecrets) {
