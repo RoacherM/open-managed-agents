@@ -105,8 +105,18 @@ export function ChatColumn({
                else streaming yet */}
       <Conversation className="flex-1 min-h-0">
         <ConversationContent className={`px-3.5 py-6 gap-4 ${measure}`}>
-          {turns.map((turn) => (
-            <CanonicalSessionTurn key={turn.id} turn={turn} />
+          {/* turn.id alone is NOT unique on the Node runtime: user.message
+              events carry no id, so the projection falls back to the
+              literal "user-message" for every turn. Duplicate React keys
+              made reconciliation swallow whole turns on re-render (13 of
+              22 rendered in sess-1wo4h2scx1ht3ttl). The first raw event's
+              seq is stable and unique per turn; index is the last-ditch
+              fallback for id-less AND seq-less legacy turns. */}
+          {turns.map((turn, i) => (
+            <CanonicalSessionTurn
+              key={`${turn.id}:${(turn.rawEvents[0] as { seq?: number } | undefined)?.seq ?? i}`}
+              turn={turn}
+            />
           ))}
           {localPending && (
             <EventRender

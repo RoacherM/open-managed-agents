@@ -107,7 +107,20 @@ export class NodeSessionRouter implements SessionRouter {
     const events = await log.getEventsAsync(opts.afterSeq);
     const limit = opts.limit ?? 100;
     const data = events.slice(0, limit) as unknown as StoredEvent[];
-    return { data, has_more: events.length > limit };
+    const hasMore = events.length > limit;
+    // next_page mirrors the CF runtime's `seq_<n>` cursor contract
+    // (session-do). The console's history loader breaks without it:
+    // has_more alone left it stranded on page one, so sessions longer
+    // than one page rendered only their head (sess-1wo4h2scx1ht3ttl,
+    // 1387 events, showed 200 + the SSE replay window).
+    const lastSeq = hasMore
+      ? (data[data.length - 1] as { seq?: number } | undefined)?.seq
+      : undefined;
+    return {
+      data,
+      has_more: hasMore,
+      ...(typeof lastSeq === "number" ? { next_page: `seq_${lastSeq}` } : {}),
+    };
   }
 
   async getThreadEvents(
@@ -164,7 +177,7 @@ export class NodeSessionRouter implements SessionRouter {
       }
     };
 
-    const enqueue = (raw: string) => {
+    const enqueue = (raw: string, opts2?: { unbounded?: boolean }) => {
       if (closed) return;
       if (!passes(raw)) return;
       const frame: SessionStreamFrame = { data: raw };
@@ -172,7 +185,7 @@ export class NodeSessionRouter implements SessionRouter {
         const w = waker;
         waker = null;
         w({ value: frame, done: false });
-      } else if (buf.length < 1024) {
+      } else if (opts2?.unbounded || buf.length < 1024) {
         buf.push(frame);
       }
     };
@@ -180,6 +193,15 @@ export class NodeSessionRouter implements SessionRouter {
     // Replay history > lastEventId before subscribing — gated by `replay`
     // OR `lastEventId` (Last-Event-ID = SSE-native resume contract: client
     // sent it, they want history > N regardless of opt-in flag).
+    //
+    // Replay bypasses the 1024-frame flow-control cap: the whole history
+    // is enqueued synchronously before the consumer takes its first pull,
+    // so a session longer than the cap silently lost everything past
+    // frame 1024 — the console rendered seq 1..1024 and then only events
+    // broadcast after connect (sess-1wo4h2scx1ht3ttl, 1387 events).
+    // Memory-wise this is the same order as getEventsAsync's own
+    // materialised array; the cap stays for live frames, where a stalled
+    // consumer would otherwise buffer an unbounded stream.
     if (opts.replay || opts.lastEventId !== undefined) {
       const log = this.deps.newEventLog(sessionId);
       const history = await log.getEventsAsync(opts.lastEventId ?? undefined);
@@ -188,7 +210,7 @@ export class NodeSessionRouter implements SessionRouter {
           (ev as { session_thread_id?: string }).session_thread_id ??
           "sthr_primary";
         if (opts.threadId && tid !== opts.threadId) continue;
-        enqueue(JSON.stringify(ev));
+        enqueue(JSON.stringify(ev), { unbounded: true });
       }
     }
 

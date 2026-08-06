@@ -53,6 +53,11 @@ export interface SessionEventsQuery {
 export interface SessionEventsPage {
   data: StoredEvent[];
   has_more: boolean;
+  /** Cursor for the next page, `seq_<n>` — same contract as the CF
+   *  runtime (session-do). Clients paginate with
+   *  `?after_seq=<n>`; omitting this while has_more is true strands
+   *  them on page one. */
+  next_page?: string;
 }
 
 export interface SessionFullStatus {
