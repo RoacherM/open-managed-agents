@@ -381,13 +381,18 @@ export class LocalSubprocessSandbox implements SandboxExecutor {
    * to the per-session `<workdir>/.mnt/...` symlinks (see header comment
    * for why there is no global /mnt link).
    *
-   * Any other absolute path is accepted verbatim when it already points
-   * inside this session's workdir (bash prints real host paths; agents
-   * echo them back into read/write tools) and rejected loudly otherwise.
-   * The old behaviour silently re-rooted foreign absolute paths under
-   * workdir, which made bash (unjailed) and file tools (jailed) see
-   * different filesystems — agents chased ENOENTs for files bash could
-   * plainly see (sess-lfm5qnnh3nfjertm, 2026-08-06).
+   * Any other absolute path: if it already points inside this session's
+   * workdir it passes verbatim — bash prints real host paths and agents
+   * echo them back into read/write tools; re-rooting those produced
+   * <workdir>/<workdir>/... double-prefix ENOENTs
+   * (sess-lfm5qnnh3nfjertm, 2026-08-06). Otherwise it is re-rooted
+   * under the workdir. The re-root is a CONTRACT, not a fallback: the
+   * file-tool side of this executor exposes a workdir-rooted filesystem
+   * view, and harness VFS layers rely on it as their jail —
+   * @ai-sdk/harness-pi patches Node fs process-wide and feeds guest
+   * paths like /home/user/.skills/... straight into readFileBytes,
+   * expecting them to land (reads AND writes symmetrically) inside the
+   * session workdir.
    */
   private resolvePath(p: string): string {
     let normalised = p;
@@ -409,11 +414,7 @@ export class LocalSubprocessSandbox implements SandboxExecutor {
       const resolved = resolve(normalised);
       const root = resolve(this.workdir);
       if (resolved === root || resolved.startsWith(root + "/")) return resolved;
-      throw new Error(
-        `EACCES: ${p} is outside the session sandbox. Use a relative path, ` +
-        `/workspace/... for scratch files, or /mnt/session/outputs/... for ` +
-        `persistent artifacts (in bash: $OMA_OUTPUTS_DIR).`,
-      );
+      normalised = normalised.slice(1);
     }
     return join(this.workdir, normalised);
   }

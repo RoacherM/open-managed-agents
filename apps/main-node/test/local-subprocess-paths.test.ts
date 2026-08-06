@@ -1,12 +1,12 @@
 // Path-resolution contract of LocalSubprocessSandbox.
 //
-// Regression suite for the sess-lfm5qnnh3nfjertm trace (2026-08-06) where
-// bash (unjailed) and the file tools (jailed) saw different filesystems:
-// the old resolvePath silently re-rooted every foreign absolute path under
-// the workdir, so reading a real host path bash had just written produced
-// ENOENT — including the double-prefix form where the agent passed the
-// workdir's own absolute path back in. Also locks the concurrency rule
-// that outputs mounts stay per-session (no shared global /mnt symlink).
+// Regression suite for the sess-lfm5qnnh3nfjertm trace (2026-08-06). The
+// file tools expose a workdir-rooted view (the jail @ai-sdk/harness-pi's
+// VFS relies on), but the old resolvePath also re-rooted the workdir's OWN
+// absolute path when an agent echoed it back from bash output, producing
+// <workdir>/<workdir>/... double-prefix ENOENTs. Also locks the
+// concurrency rule that outputs mounts stay per-session (no shared global
+// /mnt symlink) and the $OMA_OUTPUTS_DIR bash contract.
 
 import { mkdtemp, readFile, rm, writeFile as fsWriteFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -40,17 +40,19 @@ describe("LocalSubprocessSandbox path resolution", () => {
     expect(await sandbox.readFile(join(workdir, "report.txt"))).toBe("hello");
   });
 
-  it("rejects absolute paths outside the sandbox with a clear error instead of silently re-rooting", async () => {
-    const { base, sandbox } = await makeSandbox();
-    // A real file outside the workdir — old code would NOT read it but
-    // also not fail clearly: it re-rooted to <workdir>/... and threw
-    // ENOENT, gaslighting the agent about a file bash could see.
+  it("re-roots foreign absolute paths under the workdir (the jail contract pi VFS relies on)", async () => {
+    const { base, workdir, sandbox } = await makeSandbox();
+    // Writes land inside the jail, symmetric with reads —
+    // @ai-sdk/harness-pi feeds guest paths (/home/user/.skills/...)
+    // straight into the executor and depends on this mapping.
+    await sandbox.writeFile("/home/user/.skills/s.md", "skill");
+    expect(await readFile(join(workdir, "home", "user", ".skills", "s.md"), "utf8")).toBe("skill");
+    expect(await sandbox.readFile("/home/user/.skills/s.md")).toBe("skill");
+    // The jail also means a real host file outside the workdir is NOT
+    // reachable through the file tools.
     const outside = join(base, "outside.txt");
     await fsWriteFile(outside, "leak?");
-    await expect(sandbox.readFile(outside)).rejects.toThrow(/outside the session sandbox/);
-    await expect(sandbox.writeFile("/home/nobody/x.txt", "x")).rejects.toThrow(
-      /outside the session sandbox/,
-    );
+    await expect(sandbox.readFile(outside)).rejects.toThrow(/ENOENT/);
   });
 
   it("maps /workspace and relative paths into the workdir", async () => {
