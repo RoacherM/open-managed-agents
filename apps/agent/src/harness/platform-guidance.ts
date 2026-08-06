@@ -20,7 +20,7 @@ export const loopStopGuidance =
 // downloadable by the caller. Without this hint, agents historically wrote
 // final artefacts to /workspace/ where they vanish on container recycle.
 export const sessionOutputsGuidance =
-  "Files you write under `/mnt/session/outputs/` persist after the session ends and are downloadable by the user from the session's Files panel. Use this path for final artifacts the user should keep (reports, exports, generated docs, packaged code). Files written anywhere else (e.g. `/workspace/`) are scratch — they may be lost on container recycle and are not user-accessible.";
+  "Files you write under `/mnt/session/outputs/` persist after the session ends and are downloadable by the user from the session's Files panel. Use this path for final artifacts the user should keep (reports, exports, generated docs, packaged code). In bash, use `$OMA_OUTPUTS_DIR` — it always points at this same outputs directory regardless of sandbox type. Files written anywhere else (e.g. `/workspace/`) are scratch — they may be lost on container recycle and are not user-accessible.";
 
 export const platformGuidance =
   `${authenticatedCommandGuidance}\n\n${loopStopGuidance}\n\n${sessionOutputsGuidance}`;

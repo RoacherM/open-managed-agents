@@ -340,6 +340,10 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     await this.runOrThrow(
       `sudo ln -sfn ${shellEscape(sourcePath)} ${shellEscape(mountPoint)}`,
     );
+    // Bash-facing outputs contract, uniform across adapters: guidance
+    // tells agents `$OMA_OUTPUTS_DIR` always names the persistent
+    // outputs dir. Here it's the real guest mount.
+    await this.setEnvVars({ OMA_OUTPUTS_DIR: mountPoint });
   }
 
   /** Run a command, throw with combined output on non-zero exit. Used for

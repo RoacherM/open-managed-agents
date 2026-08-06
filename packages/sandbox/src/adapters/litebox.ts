@@ -211,6 +211,10 @@ export class LiteBoxSandbox implements SandboxExecutor {
     const hostPath = join(outputsRoot, opts.tenantId, opts.sessionId);
     mkdirSync(hostPath, { recursive: true });
     this.volumes.push({ hostPath, guestPath: "/mnt/session/outputs", readOnly: false });
+    // Bash-facing outputs contract, uniform across adapters: guidance
+    // tells agents `$OMA_OUTPUTS_DIR` always names the persistent
+    // outputs dir. Here it's the real guest mount.
+    await this.setEnvVars({ OMA_OUTPUTS_DIR: "/mnt/session/outputs" });
   }
 
   async readFile(path: string): Promise<string> {
