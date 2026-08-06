@@ -565,8 +565,12 @@ const sessionRegistry = new SessionRegistry({
       if (agent.skills?.length) {
         const skillFiles = await getSkillFiles(agent.skills, kv, filesBlob, tenantId);
         for (const skill of skillFiles) {
+          // No bash mkdir here: writes create parent dirs (ports.ts
+          // contract), and a bash `mkdir -p /home/user/...` bypasses the
+          // LocalSubprocessSandbox jail — it littered the real host
+          // /home/user/.skills with empty dirs while the actual files
+          // landed in <workdir>/home/user/.skills.
           const skillDir = `/home/user/.skills/${skill.skillName}`;
-          await sandbox.exec(`mkdir -p ${skillDir}`, 5_000);
           for (const file of skill.files) {
             const path = `${skillDir}/${file.filename}`;
             if (sandbox.writeFileBytes) {

@@ -82,4 +82,19 @@ describe("LocalSubprocessSandbox path resolution", () => {
     await sandbox.exec('printf bash-side > "$OMA_OUTPUTS_DIR/from-bash.txt"', 5000);
     expect(await sandbox.readFile("/mnt/session/outputs/from-bash.txt")).toBe("bash-side");
   });
+
+  it("pins bash HOME to the jail home so ~ sees materialized skills", async () => {
+    const { workdir, sandbox } = await makeSandbox();
+    // The harness VFS materializes skills through the file tools at
+    // /home/user/.skills/... → <workdir>/home/user/.skills/. With the
+    // host HOME inherited, `ls ~/.skills` looked empty and agents
+    // concluded no skills were installed (sess-1wo4h2scx1ht3ttl).
+    await sandbox.writeFile("/home/user/.skills/demo/SKILL.md", "# demo");
+    expect((await sandbox.exec('echo "$HOME"', 5000)).trim())
+      .toBe(join(workdir, "home", "user"));
+    expect((await sandbox.exec("ls ~/.skills", 5000)).trim()).toBe("demo");
+    // Bash-side writes under ~ stay inside the session workdir.
+    await sandbox.exec("printf note > ~/note.txt", 5000);
+    expect(await sandbox.readFile("/home/user/note.txt")).toBe("note");
+  });
 });

@@ -13,7 +13,9 @@
 // filesystem, so a single /mnt/session/outputs link would be re-pointed
 // by every mount and leak one session's writes into another's outputs.
 // Bash (which cannot see the virtual mapping) gets the concrete
-// per-session paths via $OMA_OUTPUTS_DIR / $OMA_MEMORY_* env vars.
+// per-session paths via $OMA_OUTPUTS_DIR / $OMA_MEMORY_* env vars, and
+// runs with HOME=<workdir>/home/user so ~ agrees with the VFS jail
+// (skills materialize at ~/.skills, see resolvePath).
 //
 // SECURITY: this adapter has zero process isolation. An agent that runs
 // `rm -rf /` will hit the host. ONLY use for trusted local development.
@@ -109,6 +111,9 @@ export class LocalSubprocessSandbox implements SandboxExecutor {
       log: (msg) => moduleLogger.info(msg),
     };
     mkdirSync(this.workdir, { recursive: true });
+    // Jail home — must exist before the first exec so $HOME is a real
+    // directory even when no skill has been materialized yet.
+    mkdirSync(join(this.workdir, "home", "user"), { recursive: true });
   }
 
   async exec(command: string, timeout?: number): Promise<string> {
@@ -442,6 +447,17 @@ export class LocalSubprocessSandbox implements SandboxExecutor {
       ...process.env as Record<string, string>,
       ...this.envVars,
       PWD: this.workdir,
+      // Bash's view of ~ must agree with the file-tool jail: harness VFS
+      // layers re-root guest paths like /home/user/.skills/... to
+      // <workdir>/home/user/... (see resolvePath), so HOME points at that
+      // same directory. With the host HOME inherited instead, `ls
+      // ~/.skills` showed an empty (or another user's) home while the
+      // file tools saw the materialized skills — the agent concluded no
+      // skills were installed (sess-1wo4h2scx1ht3ttl, 2026-08-06). Placed
+      // after envVars deliberately: the jail alignment is a structural
+      // invariant of this adapter, so an env resource named HOME must not
+      // repoint ~ outside the session workdir.
+      HOME: join(this.workdir, "home", "user"),
     };
     for (const { prefix, secrets } of this.commandSecrets) {
       if (command.startsWith(prefix)) Object.assign(base, secrets);

@@ -114,9 +114,14 @@ export async function createOpenMaHarnessSandbox(input: {
     const marker = `__OPENMA_HARNESS_EXIT_${crypto.randomUUID()}__`;
     const env = {
       ...options.env,
-      // Pi asks the sandbox for HOME when mounting skills. Keep it in this
-      // session root so the host user's ~/.pi / ~/.agents are unreachable.
-      HOME: `${virtualWorkDir}/.home`,
+      // Pi asks the sandbox for HOME when mounting skills. Session-rooted so
+      // the host user's ~/.pi / ~/.agents stay unreachable — and the SAME
+      // directory the executor jail re-roots /home/user/... to, so bash `~`
+      // agrees with where the file tools materialize skills
+      // (<workdir>/home/user, see LocalSubprocessSandbox.resolvePath /
+      // buildEnv). The old `.home` value shadowed the executor's HOME pin
+      // for every pi bash command and left `ls ~/.skills` empty.
+      HOME: `${virtualWorkDir}/home/user`,
     };
     for (const name of Object.keys(env)) {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {

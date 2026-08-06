@@ -175,6 +175,16 @@ export class BoxRunSandbox implements SandboxExecutor {
     const dir = slash >= 0 ? path.slice(0, slash) : "/";
     const name = slash >= 0 ? path.slice(slash + 1) : path;
     const tar = packSingleFileTar(name, bytes);
+    // The PUT /files tar upload is not documented to create missing parent
+    // dirs; the write contract (ports.ts) requires it. No timeout override:
+    // on a cold session this is the first VM-touching call and exec
+    // auto-starts the VM, so it needs the adapter's full default budget.
+    if (dir !== "/" && dir !== "") {
+      const out = await this.exec(`mkdir -p '${dir.replace(/'/g, `'\\''`)}'`);
+      if (!/^exit=0(\n|$)/.test(out)) {
+        throw new Error(`boxrun mkdir -p ${dir} failed: ${out.slice(0, 200)}`);
+      }
+    }
     const res = await this.fetch(
       `/boxes/${boxId}/files?path=${encodeURIComponent(dir)}&overwrite=true`,
       {
