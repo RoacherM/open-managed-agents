@@ -73,3 +73,20 @@ i18n 只在冲突涉及的部分移植（`main.tsx` 挂 provider）；**没有**
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/
 # 新 session → 让 agent 用 $OMA_OUTPUTS_DIR 和 /mnt/session/outputs 各写一个文件 → 查 outputs API
 ```
+
+## 更新 2026-08-06（晚）：skills/HOME 修复已合并并部署
+
+- PR #2（fix/skills-home-alignment）经 Code Terrier 3 轮 review 后合并，main = 0cd1f94。
+  内容：LocalSubprocessSandbox buildEnv 钉 HOME=<workdir>/home/user；
+  ai-sdk-harness-sandbox run() 的 HOME 前缀对齐同一目录（原 .home 会盖掉前者）；
+  删除 skills 挂载的 bash mkdir（写入建父目录升级为 ports.ts 契约，litebox/boxrun 补齐）。
+- 镜像 openma/main-node:dev 重建自 main 0cd1f94，容器已重建，线上验证全绿：
+  - 分页：sess-1wo4h2scx1ht3ttl 7 页 1387 条 last_seq=1387（next_page=seq_<n>）
+  - SSE replay：?replay=1&include=chunks 1387 帧全到（原卡 1024）
+  - skills：新 session e2e，agent 报出 film-production；exec 确认
+    HOME=<workdir>/home/user、ls ~/.skills 可见、真实 /home/user/.skills 不再产生
+- SSE 注意：replay 参数是 `?replay=1`，不是 true。
+- 遗留：pi 原生 skills 通道（~/.agents/skills）未启用——OMA 用 prompt 注入 +
+  /home/user/.skills 自造约定（多后端通用）；若要切原生需解决 HOME 虚拟/原生
+  双拼法（toExecutorPath 对原生绝对路径 throw）。skill 卸载不清理旧文件（同
+  session 内换配置残留，destroy 时才清）。bash 跨 session 可读依旧（阶段②）。
